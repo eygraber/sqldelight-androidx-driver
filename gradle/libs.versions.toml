@@ -1,0 +1,52 @@
+[versions]
+agp = "8.8.0"
+
+android-sdk-compile = "34"
+android-sdk-target = "34"
+android-sdk-min = "21"
+
+androidxSqlite = "2.5.0-alpha12"
+
+atomicfu = "0.27.0"
+
+cashapp-sqldelight = "2.0.2"
+
+conventions = "0.0.81"
+
+detekt = "1.23.7"
+
+dokka = "2.0.0"
+
+kotlin = "2.1.0"
+
+ktlint = "1.5.0"
+
+publish = "0.30.0"
+
+[plugins]
+atomicfu = { id = "org.jetbrains.kotlinx.atomicfu", version.ref = "atomicfu" }
+conventions = { id = "com.eygraber.conventions", version.ref = "conventions" }
+
+[libraries]
+androidx-collections = "androidx.collection:collection:1.5.0-beta01"
+androidx-sqlite = { module = "androidx.sqlite:sqlite", version.ref = "androidxSqlite" }
+androidx-sqliteBundled = { module = "androidx.sqlite:sqlite-bundled", version.ref = "androidxSqlite" }
+androidx-sqliteFramework = { module = "androidx.sqlite:sqlite-framework", version.ref = "androidxSqlite" }
+
+buildscript-android = { module = "com.android.tools.build:gradle", version.ref = "agp" }
+buildscript-androidCacheFix = { module = "gradle.plugin.org.gradle.android:android-cache-fix-gradle-plugin", version = "3.0.1" }
+buildscript-detekt = { module = "io.gitlab.arturbosch.detekt:detekt-gradle-plugin", version.ref = "detekt" }
+buildscript-dokka = { module = "org.jetbrains.dokka:dokka-gradle-plugin", version.ref = "dokka" }
+buildscript-kotlin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
+buildscript-publish = { module = "com.vanniktech:gradle-maven-publish-plugin", version.ref = "publish" }
+
+cashapp-sqldelight-runtime = { module = "app.cash.sqldelight:runtime", version.ref = "cashapp-sqldelight" }
+
+# not actually used; just here so renovate picks it up
+ktlint = { module = "com.pinterest.ktlint:ktlint-bom", version.ref = "ktlint" }
+
+test-androidx-core = "androidx.test:core:1.6.1"
+test-junit = { module = "junit:junit", version = "4.13.2" }
+test-kotlin = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin" }
+test-kotlin-junit = { module = "org.jetbrains.kotlin:kotlin-test-junit", version.ref = "kotlin" }
+test-robolectric = { module = "org.robolectric:robolectric", version = "4.14.1" }
