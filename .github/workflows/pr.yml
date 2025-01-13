@@ -77,7 +77,10 @@ jobs:
         run: ./gradlew lintRelease
 
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ macos-latest, ubuntu-latest ]
+    runs-on: ${{matrix.os}}
     steps:
       - uses: actions/checkout@v4
 
@@ -93,6 +96,11 @@ jobs:
 
       - name: Run tests
         run: ./gradlew allTests
+        if: matrix.os == 'ubuntu-latest'
+
+      - name: Run Apple tests
+        run: ./gradlew iosX64Test macosX64Test
+        if: matrix.os == 'macos-latest'
 
 env:
   GRADLE_OPTS: -Dorg.gradle.daemon=false -Dkotlin.incremental=false -Dorg.gradle.jvmargs="-Xmx16g -XX:+HeapDumpOnOutOfMemoryError -Dfile.encoding=UTF-8 -XX:MaxMetaspaceSize=1024m"

@@ -40,6 +40,9 @@ gradleConventionsDefaults {
 gradleConventionsKmpDefaults {
   targets(
     KmpTarget.Android,
+    KmpTarget.Ios,
     KmpTarget.Jvm,
+    KmpTarget.Linux,
+    KmpTarget.Macos,
   )
 }

@@ -5,8 +5,6 @@ libraries.
 
 It works with any of the available implementations of AndroidX SQLite; see their documentation for more information.
 
-Currently only Android and JVM are supported.
-
 ## Gradle
 
 ```kotlin

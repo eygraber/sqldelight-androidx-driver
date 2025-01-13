@@ -39,5 +39,10 @@ kotlin {
       implementation(libs.androidx.sqliteBundled)
       implementation(libs.test.kotlin.junit)
     }
+
+    nativeTest.dependencies {
+      implementation(libs.androidx.sqliteBundled)
+      implementation(libs.okio)
+    }
   }
 }

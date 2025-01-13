@@ -6,8 +6,7 @@ import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlCursor
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.db.SqlSchema
-import org.junit.After
-import java.io.File
+import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -57,6 +56,8 @@ abstract class AndroidxSqliteEphemeralTest {
 
   private val dbName = "com.eygraber.sqldelight.androidx.driver.test.db"
 
+  protected abstract fun deleteDbFile(filename: String)
+
   private fun setupDatabase(
     type: Type,
   ): SqlDriver = when(type) {
@@ -67,12 +68,12 @@ abstract class AndroidxSqliteEphemeralTest {
 
   @BeforeTest
   fun clearNamedDb() {
-    File(dbName).delete()
+    deleteDbFile(dbName)
   }
 
-  @After
+  @AfterTest
   fun clearNamedDbPostTests() {
-    File(dbName).delete()
+    deleteDbFile(dbName)
   }
 
   @Test
