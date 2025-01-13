@@ -13,6 +13,7 @@ import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.db.SqlPreparedStatement
 import app.cash.sqldelight.db.SqlSchema
 import kotlinx.atomicfu.locks.SynchronizedObject
+import kotlinx.atomicfu.locks.synchronized
 
 internal expect class TransactionsThreadLocal() {
   internal fun get(): Transacter.Transaction?
@@ -22,7 +23,7 @@ internal expect class TransactionsThreadLocal() {
 internal const val DEFAULT_CACHE_SIZE = 20
 
 /**
- * @param name Name of the database file, an empty string for a temporary database, or null for an in-memory database
+ * @param databaseType Specifies the type of the database file
  * (see [Sqlite open documentation](https://www.sqlite.org/c3ref/open.html)).
  *
  * @see AndroidxSqliteDriver

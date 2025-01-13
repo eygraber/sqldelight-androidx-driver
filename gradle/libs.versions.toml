@@ -21,6 +21,8 @@ kotlin = "2.1.0"
 
 ktlint = "1.5.0"
 
+okio = "3.10.2"
+
 publish = "0.30.0"
 
 [plugins]
@@ -44,6 +46,8 @@ cashapp-sqldelight-runtime = { module = "app.cash.sqldelight:runtime", version.r
 
 # not actually used; just here so renovate picks it up
 ktlint = { module = "com.pinterest.ktlint:ktlint-bom", version.ref = "ktlint" }
+
+okio = { module = "com.squareup.okio:okio", version.ref = "okio" }
 
 test-androidx-core = "androidx.test:core:1.6.1"
 test-junit = { module = "junit:junit", version = "4.13.2" }

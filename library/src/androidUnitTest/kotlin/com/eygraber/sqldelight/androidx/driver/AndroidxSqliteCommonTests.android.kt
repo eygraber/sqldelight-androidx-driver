@@ -6,19 +6,24 @@ import app.cash.sqldelight.Transacter
 import org.junit.Assert
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import java.io.File
 import java.util.concurrent.Semaphore
 
 @RunWith(RobolectricTestRunner::class)
 actual class CommonDriverTest : AndroidxSqliteDriverTest()
 
 @RunWith(RobolectricTestRunner::class)
-actual class CommonEphemeralTest : AndroidxSqliteEphemeralTest()
-
-@RunWith(RobolectricTestRunner::class)
 actual class CommonQueryTest : AndroidxSqliteQueryTest()
 
 @RunWith(RobolectricTestRunner::class)
 actual class CommonTransacterTest : AndroidxSqliteTransacterTest()
+
+@RunWith(RobolectricTestRunner::class)
+actual class CommonEphemeralTest : AndroidxSqliteEphemeralTest() {
+  override fun deleteDbFile(filename: String) {
+    File(filename).delete()
+  }
+}
 
 actual fun androidxSqliteTestDriver(): SQLiteDriver = AndroidSQLiteDriver()
 

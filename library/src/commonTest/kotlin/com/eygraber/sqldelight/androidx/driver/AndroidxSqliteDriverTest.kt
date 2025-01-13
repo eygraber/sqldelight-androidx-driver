@@ -66,7 +66,12 @@ abstract class AndroidxSqliteDriverTest {
   ): SqlDriver = AndroidxSqliteDriver(androidxSqliteTestDriver(), AndroidxSqliteDatabaseType.Memory, schema)
 
   private fun useSingleItemCacheDriver(block: (AndroidxSqliteDriver) -> Unit) {
-    AndroidxSqliteDriver(androidxSqliteTestDriver(), AndroidxSqliteDatabaseType.Memory, schema, cacheSize = 1).use(block)
+    AndroidxSqliteDriver(
+      androidxSqliteTestDriver(),
+      AndroidxSqliteDatabaseType.Memory,
+      schema,
+      cacheSize = 1,
+    ).use(block)
   }
 
   private fun changes(): Long? =

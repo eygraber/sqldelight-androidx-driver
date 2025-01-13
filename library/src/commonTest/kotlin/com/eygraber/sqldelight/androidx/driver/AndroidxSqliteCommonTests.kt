@@ -4,9 +4,10 @@ import androidx.sqlite.SQLiteDriver
 import app.cash.sqldelight.Transacter
 
 expect class CommonDriverTest() : AndroidxSqliteDriverTest
-expect class CommonEphemeralTest() : AndroidxSqliteEphemeralTest
 expect class CommonQueryTest() : AndroidxSqliteQueryTest
 expect class CommonTransacterTest() : AndroidxSqliteTransacterTest
+
+expect class CommonEphemeralTest() : AndroidxSqliteEphemeralTest
 
 expect fun androidxSqliteTestDriver(): SQLiteDriver
 
