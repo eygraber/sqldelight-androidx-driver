@@ -31,13 +31,23 @@ internal const val DEFAULT_CACHE_SIZE = 20
  * @see SqlSchema.migrate
  */
 public class AndroidxSqliteDriver(
-  driver: SQLiteDriver,
+  createConnection: (String) -> SQLiteConnection,
   databaseType: AndroidxSqliteDatabaseType,
   cacheSize: Int = DEFAULT_CACHE_SIZE,
 ) : SqlDriver {
+  public constructor(
+    driver: SQLiteDriver,
+    databaseType: AndroidxSqliteDatabaseType,
+    cacheSize: Int = DEFAULT_CACHE_SIZE,
+  ) : this(
+    createConnection = driver::open,
+    databaseType = databaseType,
+    cacheSize = cacheSize,
+  )
+
   private val transactions = TransactionsThreadLocal()
   private val connection by lazy {
-    driver.open(
+    createConnection(
       when(databaseType) {
         is AndroidxSqliteDatabaseType.File -> databaseType.filename
         AndroidxSqliteDatabaseType.Memory -> ":memory:"
