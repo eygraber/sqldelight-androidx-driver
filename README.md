@@ -28,7 +28,7 @@ sqldelight {
 }
 ```
 
-the easiest way to get started is to use the `AndroidxSqliteDriver` factory which will manage migrations for you:
+you get started by creating a `AndroidxSqliteDriver`:
 
 ```kotlin
 Database(
@@ -78,7 +78,7 @@ Database(
 )
 ```
 
-If you want to create and configure the driver yourself, you can construct the `AndroidxSqliteDriver` directly.
+It will handle calling the `create` and `migrate` functions on your schema for you, and keep track of the database's version.
 
 [AndroidX Kotlin Multiplatform SQLite]: https://developer.android.com/kotlin/multiplatform/sqlite
 [SQLDelight]: https://github.com/sqldelight/sqldelight

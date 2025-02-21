@@ -11,6 +11,13 @@ import java.io.File
 import java.util.concurrent.Semaphore
 
 @RunWith(RobolectricTestRunner::class)
+actual class CommonCallbackTest : AndroidxSqliteCallbackTest() {
+  override fun deleteDbFile(filename: String) {
+    File(filename).delete()
+  }
+}
+
+@RunWith(RobolectricTestRunner::class)
 actual class CommonDriverTest : AndroidxSqliteDriverTest()
 
 @RunWith(RobolectricTestRunner::class)
