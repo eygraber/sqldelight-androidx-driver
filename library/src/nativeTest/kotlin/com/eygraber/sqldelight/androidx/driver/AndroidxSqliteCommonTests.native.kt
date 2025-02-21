@@ -14,6 +14,12 @@ import kotlin.native.concurrent.ObsoleteWorkersApi
 import kotlin.native.concurrent.Worker
 import kotlin.test.assertFailsWith
 
+actual class CommonCallbackTest : AndroidxSqliteCallbackTest() {
+  override fun deleteDbFile(filename: String) {
+    FileSystem.SYSTEM.delete(filename.toPath())
+  }
+}
+
 actual class CommonDriverTest : AndroidxSqliteDriverTest()
 actual class CommonDriverOpenFlagsTest : AndroidxSqliteDriverOpenFlagsTest()
 actual class CommonQueryTest : AndroidxSqliteQueryTest()

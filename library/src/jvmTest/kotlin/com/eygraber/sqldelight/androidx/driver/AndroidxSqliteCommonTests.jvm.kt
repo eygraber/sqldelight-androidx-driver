@@ -10,6 +10,12 @@ import org.junit.Assert
 import java.io.File
 import java.util.concurrent.Semaphore
 
+actual class CommonCallbackTest : AndroidxSqliteCallbackTest() {
+  override fun deleteDbFile(filename: String) {
+    File(filename).delete()
+  }
+}
+
 actual class CommonDriverTest : AndroidxSqliteDriverTest()
 actual class CommonDriverOpenFlagsTest : AndroidxSqliteDriverOpenFlagsTest()
 actual class CommonQueryTest : AndroidxSqliteQueryTest()

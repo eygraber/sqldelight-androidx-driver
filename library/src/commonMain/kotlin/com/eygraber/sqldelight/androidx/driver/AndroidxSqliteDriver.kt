@@ -7,11 +7,13 @@ import androidx.sqlite.SQLiteStatement
 import androidx.sqlite.execSQL
 import app.cash.sqldelight.Query
 import app.cash.sqldelight.Transacter
+import app.cash.sqldelight.db.AfterVersion
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlCursor
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.db.SqlPreparedStatement
 import app.cash.sqldelight.db.SqlSchema
+import kotlinx.atomicfu.atomic
 import kotlinx.atomicfu.locks.SynchronizedObject
 import kotlinx.atomicfu.locks.synchronized
 
@@ -33,17 +35,38 @@ internal const val DEFAULT_CACHE_SIZE = 20
 public class AndroidxSqliteDriver(
   createConnection: (String) -> SQLiteConnection,
   databaseType: AndroidxSqliteDatabaseType,
+  private val schema: SqlSchema<QueryResult.Value<Unit>>,
   cacheSize: Int = DEFAULT_CACHE_SIZE,
+  private val migrateEmptySchema: Boolean = false,
+  private val onCreate: SqlDriver.() -> Unit = {},
+  private val onUpdate: SqlDriver.(Long, Long) -> Unit = { _, _ -> },
+  private val onOpen: SqlDriver.() -> Unit = {},
+  vararg migrationCallbacks: AfterVersion,
 ) : SqlDriver {
   public constructor(
     driver: SQLiteDriver,
     databaseType: AndroidxSqliteDatabaseType,
+    schema: SqlSchema<QueryResult.Value<Unit>>,
     cacheSize: Int = DEFAULT_CACHE_SIZE,
+    migrateEmptySchema: Boolean = false,
+    onCreate: SqlDriver.() -> Unit = {},
+    onUpdate: SqlDriver.(Long, Long) -> Unit = { _, _ -> },
+    onOpen: SqlDriver.() -> Unit = {},
+    vararg migrationCallbacks: AfterVersion,
   ) : this(
     createConnection = driver::open,
     databaseType = databaseType,
     cacheSize = cacheSize,
+    schema = schema,
+    migrateEmptySchema = migrateEmptySchema,
+    onCreate = onCreate,
+    onUpdate = onUpdate,
+    onOpen = onOpen,
+    migrationCallbacks = migrationCallbacks,
   )
+
+  @Suppress("NonBooleanPropertyPrefixedWithIs")
+  private val isFirstInteraction = atomic(true)
 
   private val transactions = TransactionsThreadLocal()
   private val connection by lazy {
@@ -70,6 +93,8 @@ public class AndroidxSqliteDriver(
   private val listenersLock = SynchronizedObject()
   private val listeners = linkedMapOf<String, MutableSet<Query.Listener>>()
 
+  private val migrationCallbacks = migrationCallbacks
+
   override fun addListener(vararg queryKeys: String, listener: Query.Listener) {
     synchronized(listenersLock) {
       queryKeys.forEach {
@@ -95,6 +120,8 @@ public class AndroidxSqliteDriver(
   }
 
   override fun newTransaction(): QueryResult<Transacter.Transaction> {
+    triggerCallbackForFirstInteraction()
+
     val enclosing = transactions.get()
     val transaction = Transaction(enclosing)
     transactions.set(transaction)
@@ -130,12 +157,14 @@ public class AndroidxSqliteDriver(
     binders: (SqlPreparedStatement.() -> Unit)?,
     result: AndroidxStatement.() -> T,
   ): QueryResult.Value<T> {
+    triggerCallbackForFirstInteraction()
+
     var statement: AndroidxStatement? = null
     if(identifier != null) {
       statement = statements[identifier]
 
       // remove temporarily from the cache
-      if (statement != null) {
+      if(statement != null) {
         statements.remove(identifier)
       }
     }
@@ -178,6 +207,29 @@ public class AndroidxSqliteDriver(
     statements.snapshot().values.forEach { it.close() }
     statements.evictAll()
     return connection.close()
+  }
+
+  private fun triggerCallbackForFirstInteraction() {
+    if(isFirstInteraction.compareAndSet(expect = true, update = false)) {
+      val currentVersion = connection.prepare("PRAGMA user_version").use { getVersion ->
+        when {
+          getVersion.step() -> getVersion.getLong(0)
+          else -> 0
+        }
+      }
+
+      if(currentVersion == 0L && !migrateEmptySchema) {
+        schema.create(this).value
+        connection.prepare("PRAGMA user_version = ${schema.version}").use { it.step() }
+        onCreate()
+      } else if(currentVersion < schema.version) {
+        schema.migrate(this, currentVersion, schema.version, *migrationCallbacks).value
+        connection.prepare("PRAGMA user_version = ${schema.version}").use { it.step() }
+        onUpdate(currentVersion, schema.version)
+      }
+
+      onOpen()
+    }
   }
 }
 

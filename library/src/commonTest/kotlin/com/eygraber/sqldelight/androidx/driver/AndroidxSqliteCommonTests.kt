@@ -4,6 +4,7 @@ import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.SQLiteDriver
 import app.cash.sqldelight.Transacter
 
+expect class CommonCallbackTest() : AndroidxSqliteCallbackTest
 expect class CommonDriverTest() : AndroidxSqliteDriverTest
 expect class CommonDriverOpenFlagsTest() : AndroidxSqliteDriverOpenFlagsTest
 expect class CommonQueryTest() : AndroidxSqliteQueryTest
