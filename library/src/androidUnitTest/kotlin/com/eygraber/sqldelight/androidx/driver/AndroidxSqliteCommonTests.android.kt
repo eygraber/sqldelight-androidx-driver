@@ -1,5 +1,6 @@
 package com.eygraber.sqldelight.androidx.driver
 
+import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.SQLiteDriver
 import androidx.sqlite.driver.AndroidSQLiteDriver
 import app.cash.sqldelight.Transacter
@@ -11,6 +12,9 @@ import java.util.concurrent.Semaphore
 
 @RunWith(RobolectricTestRunner::class)
 actual class CommonDriverTest : AndroidxSqliteDriverTest()
+
+@RunWith(RobolectricTestRunner::class)
+actual class CommonDriverOpenFlagsTest : AndroidxSqliteDriverOpenFlagsTest()
 
 @RunWith(RobolectricTestRunner::class)
 actual class CommonQueryTest : AndroidxSqliteQueryTest()
@@ -26,6 +30,10 @@ actual class CommonEphemeralTest : AndroidxSqliteEphemeralTest() {
 }
 
 actual fun androidxSqliteTestDriver(): SQLiteDriver = AndroidSQLiteDriver()
+
+actual fun androidxSqliteTestCreateConnection(): (String) -> SQLiteConnection = { name ->
+  AndroidSQLiteDriver().open(name)
+}
 
 actual inline fun <T> assertChecksThreadConfinement(
   transacter: Transacter,
