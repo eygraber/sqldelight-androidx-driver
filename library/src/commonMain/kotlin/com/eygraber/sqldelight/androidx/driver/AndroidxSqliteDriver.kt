@@ -49,7 +49,7 @@ public class AndroidxSqliteDriver(
   private val connection by lazy {
     createConnection(
       when(databaseType) {
-        is AndroidxSqliteDatabaseType.File -> databaseType.filename
+        is AndroidxSqliteDatabaseType.File -> databaseType.databaseFilePath
         AndroidxSqliteDatabaseType.Memory -> ":memory:"
         AndroidxSqliteDatabaseType.Temporary -> ""
       },
