@@ -7,6 +7,7 @@ import androidx.sqlite.SQLiteStatement
 import androidx.sqlite.execSQL
 import app.cash.sqldelight.Query
 import app.cash.sqldelight.Transacter
+import app.cash.sqldelight.TransacterImpl
 import app.cash.sqldelight.db.AfterVersion
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlCursor
@@ -14,6 +15,7 @@ import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.db.SqlPreparedStatement
 import app.cash.sqldelight.db.SqlSchema
 import kotlinx.atomicfu.atomic
+import kotlinx.atomicfu.locks.ReentrantLock
 import kotlinx.atomicfu.locks.SynchronizedObject
 import kotlinx.atomicfu.locks.synchronized
 
@@ -37,7 +39,9 @@ public class AndroidxSqliteDriver(
   databaseType: AndroidxSqliteDatabaseType,
   private val schema: SqlSchema<QueryResult.Value<Unit>>,
   cacheSize: Int = DEFAULT_CACHE_SIZE,
+  private val isAccessMultithreaded: Boolean = true,
   private val migrateEmptySchema: Boolean = false,
+  private val onConfigure: ConfigurableDatabase.() -> Unit = {},
   private val onCreate: SqlDriver.() -> Unit = {},
   private val onUpdate: SqlDriver.(Long, Long) -> Unit = { _, _ -> },
   private val onOpen: SqlDriver.() -> Unit = {},
@@ -48,7 +52,9 @@ public class AndroidxSqliteDriver(
     databaseType: AndroidxSqliteDatabaseType,
     schema: SqlSchema<QueryResult.Value<Unit>>,
     cacheSize: Int = DEFAULT_CACHE_SIZE,
+    isAccessMultithreaded: Boolean = true,
     migrateEmptySchema: Boolean = false,
+    onConfigure: ConfigurableDatabase.() -> Unit = {},
     onCreate: SqlDriver.() -> Unit = {},
     onUpdate: SqlDriver.(Long, Long) -> Unit = { _, _ -> },
     onOpen: SqlDriver.() -> Unit = {},
@@ -56,9 +62,11 @@ public class AndroidxSqliteDriver(
   ) : this(
     createConnection = driver::open,
     databaseType = databaseType,
-    cacheSize = cacheSize,
     schema = schema,
+    cacheSize = cacheSize,
+    isAccessMultithreaded = isAccessMultithreaded,
     migrateEmptySchema = migrateEmptySchema,
+    onConfigure = onConfigure,
     onCreate = onCreate,
     onUpdate = onUpdate,
     onOpen = onOpen,
@@ -68,7 +76,6 @@ public class AndroidxSqliteDriver(
   @Suppress("NonBooleanPropertyPrefixedWithIs")
   private val isFirstInteraction = atomic(true)
 
-  private val transactions = TransactionsThreadLocal()
   private val connection by lazy {
     createConnection(
       when(databaseType) {
@@ -78,6 +85,9 @@ public class AndroidxSqliteDriver(
       },
     )
   }
+
+  private val transactions = TransactionsThreadLocal()
+  private val explicitTransactionLock = ReentrantLock()
 
   private val statements = object : LruCache<Int, AndroidxStatement>(cacheSize) {
     override fun entryRemoved(
@@ -89,6 +99,8 @@ public class AndroidxSqliteDriver(
       if(evicted) oldValue.close()
     }
   }
+
+  private var skipStatementsCache = true
 
   private val listenersLock = SynchronizedObject()
   private val listeners = linkedMapOf<String, MutableSet<Query.Listener>>()
@@ -120,13 +132,14 @@ public class AndroidxSqliteDriver(
   }
 
   override fun newTransaction(): QueryResult<Transacter.Transaction> {
-    triggerCallbackForFirstInteraction()
+    createOrMigrateIfNeeded()
 
     val enclosing = transactions.get()
     val transaction = Transaction(enclosing)
     transactions.set(transaction)
 
     if(enclosing == null) {
+      if(isAccessMultithreaded) explicitTransactionLock.lock()
       connection.execSQL("BEGIN IMMEDIATE")
     }
 
@@ -140,10 +153,15 @@ public class AndroidxSqliteDriver(
   ) : Transacter.Transaction() {
     override fun endTransaction(successful: Boolean): QueryResult<Unit> {
       if(enclosingTransaction == null) {
-        if(successful) {
-          connection.execSQL("COMMIT")
-        } else {
-          connection.execSQL("ROLLBACK")
+        try {
+          if(successful) {
+            connection.execSQL("COMMIT")
+          } else {
+            connection.execSQL("ROLLBACK")
+          }
+        }
+        finally {
+          if(isAccessMultithreaded) explicitTransactionLock.unlock()
         }
       }
       transactions.set(enclosingTransaction)
@@ -157,10 +175,10 @@ public class AndroidxSqliteDriver(
     binders: (SqlPreparedStatement.() -> Unit)?,
     result: AndroidxStatement.() -> T,
   ): QueryResult.Value<T> {
-    triggerCallbackForFirstInteraction()
+    createOrMigrateIfNeeded()
 
     var statement: AndroidxStatement? = null
-    if(identifier != null) {
+    if(identifier != null && !skipStatementsCache) {
       statement = statements[identifier]
 
       // remove temporarily from the cache
@@ -177,7 +195,7 @@ public class AndroidxSqliteDriver(
       }
       return QueryResult.Value(statement.result())
     } finally {
-      if(identifier != null) {
+      if(identifier != null && !skipStatementsCache) {
         statements.put(identifier, statement)?.close()
         statement.reset()
       } else {
@@ -209,26 +227,49 @@ public class AndroidxSqliteDriver(
     return connection.close()
   }
 
-  private fun triggerCallbackForFirstInteraction() {
-    if(isFirstInteraction.compareAndSet(expect = true, update = false)) {
-      val currentVersion = connection.prepare("PRAGMA user_version").use { getVersion ->
-        when {
-          getVersion.step() -> getVersion.getLong(0)
-          else -> 0
+  private val createOrMigrateLock = SynchronizedObject()
+  private var isNestedUnderCreateOrMigrate = false
+  private fun createOrMigrateIfNeeded() {
+    if(isFirstInteraction.value) {
+      synchronized(createOrMigrateLock) {
+        if(isFirstInteraction.value && !isNestedUnderCreateOrMigrate) {
+          isNestedUnderCreateOrMigrate = true
+
+          ConfigurableDatabase(this).onConfigure()
+
+          val currentVersion = connection.prepare("PRAGMA user_version").use { getVersion ->
+            when {
+              getVersion.step() -> getVersion.getLong(0)
+              else -> 0
+            }
+          }
+
+          if(currentVersion == 0L && !migrateEmptySchema || currentVersion < schema.version) {
+            val driver = this
+            val transacter = object : TransacterImpl(driver) {}
+
+            transacter.transaction {
+              when(currentVersion) {
+                0L -> schema.create(driver).value
+                else -> schema.migrate(driver, currentVersion, schema.version, *migrationCallbacks).value
+              }
+              skipStatementsCache = false
+              when(currentVersion) {
+                0L -> onCreate()
+                else -> onUpdate(currentVersion, schema.version)
+              }
+              connection.prepare("PRAGMA user_version = ${schema.version}").use { it.step() }
+            }
+          }
+          else {
+            skipStatementsCache = false
+          }
+
+          onOpen()
+
+          isFirstInteraction.value = false
         }
       }
-
-      if(currentVersion == 0L && !migrateEmptySchema) {
-        schema.create(this).value
-        connection.prepare("PRAGMA user_version = ${schema.version}").use { it.step() }
-        onCreate()
-      } else if(currentVersion < schema.version) {
-        schema.migrate(this, currentVersion, schema.version, *migrationCallbacks).value
-        connection.prepare("PRAGMA user_version = ${schema.version}").use { it.step() }
-        onUpdate(currentVersion, schema.version)
-      }
-
-      onOpen()
     }
   }
 }
