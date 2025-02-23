@@ -16,6 +16,10 @@ kotlin {
   )
 
   sourceSets {
+    androidMain.dependencies {
+      implementation(libs.atomicfu)
+    }
+
     androidUnitTest.dependencies {
       implementation(libs.androidx.sqliteFramework)
 
