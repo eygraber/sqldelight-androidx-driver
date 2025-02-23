@@ -33,7 +33,7 @@ repositories {
 }
 
 dependencies {
-  implementation("com.eygraber:sqldelight-androidx-driver:0.0.4")
+  implementation("com.eygraber:sqldelight-androidx-driver:0.0.5")
 }
 ```
 
