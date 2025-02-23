@@ -36,6 +36,8 @@ androidx-sqlite = { module = "androidx.sqlite:sqlite", version.ref = "androidxSq
 androidx-sqliteBundled = { module = "androidx.sqlite:sqlite-bundled", version.ref = "androidxSqlite" }
 androidx-sqliteFramework = { module = "androidx.sqlite:sqlite-framework", version.ref = "androidxSqlite" }
 
+atomicfu = { module = "org.jetbrains.kotlinx:atomicfu", version.ref = "atomicfu" }
+
 buildscript-android = { module = "com.android.tools.build:gradle", version.ref = "agp" }
 buildscript-androidCacheFix = { module = "gradle.plugin.org.gradle.android:android-cache-fix-gradle-plugin", version = "3.0.1" }
 buildscript-detekt = { module = "io.gitlab.arturbosch.detekt:detekt-gradle-plugin", version.ref = "detekt" }
