@@ -18,6 +18,7 @@ detekt = "1.23.8"
 dokka = "2.0.0"
 
 kotlin = "2.1.10"
+kotlinx-coroutines = "1.10.1"
 
 ktlint = "1.5.0"
 
@@ -44,6 +45,8 @@ buildscript-publish = { module = "com.vanniktech:gradle-maven-publish-plugin", v
 
 cashapp-sqldelight-runtime = { module = "app.cash.sqldelight:runtime", version.ref = "cashapp-sqldelight" }
 
+kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }
+
 # not actually used; just here so renovate picks it up
 ktlint = { module = "com.pinterest.ktlint:ktlint-bom", version.ref = "ktlint" }
 
@@ -53,4 +56,5 @@ test-androidx-core = "androidx.test:core:1.6.1"
 test-junit = { module = "junit:junit", version = "4.13.2" }
 test-kotlin = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin" }
 test-kotlin-junit = { module = "org.jetbrains.kotlin:kotlin-test-junit", version.ref = "kotlin" }
+test-kotlinx-coroutines = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "kotlinx-coroutines" }
 test-robolectric = { module = "org.robolectric:robolectric", version = "4.14.1" }

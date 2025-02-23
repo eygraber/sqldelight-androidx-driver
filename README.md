@@ -5,6 +5,26 @@ libraries.
 
 It works with any of the available implementations of AndroidX SQLite; see their documentation for more information.
 
+> [!IMPORTANT]  
+> If you are using the Bundled or Native implementation, and there will be multithreaded access to the database,
+> then you **must** create the driver with the `SQLITE_OPEN_FULLMUTEX` flag:
+>
+> ```kotlin
+> Database(
+>   AndroidxSqliteDriver(
+>     createConnection = { name ->
+>       val openFlags = SQLITE_OPEN_READWRITE or SQLITE_OPEN_CREATE or SQLITE_OPEN_FULLMUTEX
+>       BundledSQLiteDriver().open(name, openFlags)
+>     },
+>     ...
+>   )
+> )
+> ```
+> 
+> If you are certain that there won't be any multithreaded access to the database,
+> you can choose to omit `SQLITE_OPEN_FULLMUTEX`, and pass `isAccessMultithreaded = false`
+> to `AndroidxSqliteDriver` for a (very) small performance boost.
+
 ## Gradle
 
 ```kotlin

@@ -56,8 +56,6 @@ abstract class AndroidxSqliteEphemeralTest {
 
   private val dbName = "com.eygraber.sqldelight.androidx.driver.test.db"
 
-  protected abstract fun deleteDbFile(filename: String)
-
   private fun setupDatabase(
     type: Type,
   ): SqlDriver = when(type) {
@@ -68,12 +66,12 @@ abstract class AndroidxSqliteEphemeralTest {
 
   @BeforeTest
   fun clearNamedDb() {
-    deleteDbFile(dbName)
+    deleteFile(dbName)
   }
 
   @AfterTest
   fun clearNamedDbPostTests() {
-    deleteDbFile(dbName)
+    deleteFile(dbName)
   }
 
   @Test

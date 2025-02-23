@@ -4,33 +4,34 @@ import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.SQLiteDriver
 import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import androidx.sqlite.driver.bundled.SQLITE_OPEN_CREATE
+import androidx.sqlite.driver.bundled.SQLITE_OPEN_FULLMUTEX
 import androidx.sqlite.driver.bundled.SQLITE_OPEN_READWRITE
 import app.cash.sqldelight.Transacter
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import org.junit.Assert
 import java.io.File
 import java.util.concurrent.Semaphore
 
-actual class CommonCallbackTest : AndroidxSqliteCallbackTest() {
-  override fun deleteDbFile(filename: String) {
-    File(filename).delete()
-  }
-}
-
+actual class CommonCallbackTest : AndroidxSqliteCallbackTest()
+actual class CommonConcurrencyTest : AndroidxSqliteConcurrencyTest()
 actual class CommonDriverTest : AndroidxSqliteDriverTest()
 actual class CommonDriverOpenFlagsTest : AndroidxSqliteDriverOpenFlagsTest()
 actual class CommonQueryTest : AndroidxSqliteQueryTest()
 actual class CommonTransacterTest : AndroidxSqliteTransacterTest()
-
-actual class CommonEphemeralTest : AndroidxSqliteEphemeralTest() {
-  override fun deleteDbFile(filename: String) {
-    File(filename).delete()
-  }
-}
+actual class CommonEphemeralTest : AndroidxSqliteEphemeralTest()
 
 actual fun androidxSqliteTestDriver(): SQLiteDriver = BundledSQLiteDriver()
 
 actual fun androidxSqliteTestCreateConnection(): (String) -> SQLiteConnection = { name ->
-  BundledSQLiteDriver().open(name, SQLITE_OPEN_READWRITE or SQLITE_OPEN_CREATE)
+  BundledSQLiteDriver().open(name, SQLITE_OPEN_READWRITE or SQLITE_OPEN_CREATE or SQLITE_OPEN_FULLMUTEX)
+}
+
+@Suppress("InjectDispatcher")
+actual val IoDispatcher: CoroutineDispatcher get() = Dispatchers.IO
+
+actual fun deleteFile(name: String) {
+  File(name).delete()
 }
 
 actual inline fun <T> assertChecksThreadConfinement(

@@ -4,6 +4,8 @@ import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.SQLiteDriver
 import androidx.sqlite.driver.AndroidSQLiteDriver
 import app.cash.sqldelight.Transacter
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import org.junit.Assert
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -11,11 +13,10 @@ import java.io.File
 import java.util.concurrent.Semaphore
 
 @RunWith(RobolectricTestRunner::class)
-actual class CommonCallbackTest : AndroidxSqliteCallbackTest() {
-  override fun deleteDbFile(filename: String) {
-    File(filename).delete()
-  }
-}
+actual class CommonCallbackTest : AndroidxSqliteCallbackTest()
+
+@RunWith(RobolectricTestRunner::class)
+actual class CommonConcurrencyTest : AndroidxSqliteConcurrencyTest()
 
 @RunWith(RobolectricTestRunner::class)
 actual class CommonDriverTest : AndroidxSqliteDriverTest()
@@ -30,16 +31,19 @@ actual class CommonQueryTest : AndroidxSqliteQueryTest()
 actual class CommonTransacterTest : AndroidxSqliteTransacterTest()
 
 @RunWith(RobolectricTestRunner::class)
-actual class CommonEphemeralTest : AndroidxSqliteEphemeralTest() {
-  override fun deleteDbFile(filename: String) {
-    File(filename).delete()
-  }
-}
+actual class CommonEphemeralTest : AndroidxSqliteEphemeralTest()
 
 actual fun androidxSqliteTestDriver(): SQLiteDriver = AndroidSQLiteDriver()
 
 actual fun androidxSqliteTestCreateConnection(): (String) -> SQLiteConnection = { name ->
   AndroidSQLiteDriver().open(name)
+}
+
+@Suppress("InjectDispatcher")
+actual val IoDispatcher: CoroutineDispatcher get() = Dispatchers.IO
+
+actual fun deleteFile(name: String) {
+  File(name).delete()
 }
 
 actual inline fun <T> assertChecksThreadConfinement(

@@ -32,7 +32,10 @@ kotlin {
     }
 
     commonTest.dependencies {
+      implementation(libs.kotlinx.coroutines.core)
+
       implementation(libs.test.kotlin)
+      implementation(libs.test.kotlinx.coroutines)
     }
 
     jvmTest.dependencies {

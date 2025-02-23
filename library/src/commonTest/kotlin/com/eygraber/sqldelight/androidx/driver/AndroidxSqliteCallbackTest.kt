@@ -104,6 +104,7 @@ abstract class AndroidxSqliteCallbackTest {
 
   private fun setupDatabase(
     schema: SqlSchema<QueryResult.Value<Unit>>,
+    onConfigure: ConfigurableDatabase.() -> Unit,
     onCreate: SqlDriver.() -> Unit,
     onUpdate: SqlDriver.(Long, Long) -> Unit,
     onOpen: SqlDriver.() -> Unit,
@@ -111,42 +112,45 @@ abstract class AndroidxSqliteCallbackTest {
     driver = androidxSqliteTestDriver(),
     databaseType = AndroidxSqliteDatabaseType.File(dbName),
     schema = schema,
+    onConfigure = onConfigure,
     onCreate = onCreate,
     onUpdate = onUpdate,
     onOpen = onOpen,
   )
 
-  protected abstract fun deleteDbFile(filename: String)
-
   @BeforeTest
   fun clearNamedDb() {
-    deleteDbFile(dbName)
+    deleteFile(dbName)
   }
 
   @AfterTest
   fun clearNamedDbPostTests() {
-    deleteDbFile(dbName)
+    deleteFile(dbName)
   }
 
   @Test
   fun `create and open callbacks are invoked once when opening a new database`() {
+    var configure = 0
     var create = 0
     var update = 0
     var open = 0
 
     val driver = setupDatabase(
       schema = schema,
+      onConfigure = { configure++ },
       onCreate = { create++ },
       onUpdate = { _, _ -> update++ },
       onOpen = { open++ },
     )
 
+    assertEquals(0, configure)
     assertEquals(0, create)
     assertEquals(0, update)
     assertEquals(0, open)
 
     driver.execute(null, "PRAGMA user_version", 0)
 
+    assertEquals(1, configure)
     assertEquals(1, create)
     assertEquals(0, update)
     assertEquals(1, open)
@@ -154,23 +158,27 @@ abstract class AndroidxSqliteCallbackTest {
 
   @Test
   fun `create is invoked once and open is invoked twice when opening a new database closing it and then opening it again`() {
+    var configure = 0
     var create = 0
     var update = 0
     var open = 0
 
     var driver = setupDatabase(
       schema = schema,
+      onConfigure = { configure++ },
       onCreate = { create++ },
       onUpdate = { _, _ -> update++ },
       onOpen = { open++ },
     )
 
+    assertEquals(0, configure)
     assertEquals(0, create)
     assertEquals(0, update)
     assertEquals(0, open)
 
     driver.execute(null, "PRAGMA user_version", 0)
 
+    assertEquals(1, configure)
     assertEquals(1, create)
     assertEquals(0, update)
     assertEquals(1, open)
@@ -179,17 +187,20 @@ abstract class AndroidxSqliteCallbackTest {
 
     driver = setupDatabase(
       schema = schema,
+      onConfigure = { configure++ },
       onCreate = { create++ },
       onUpdate = { _, _ -> update++ },
       onOpen = { open++ },
     )
 
+    assertEquals(1, configure)
     assertEquals(1, create)
     assertEquals(0, update)
     assertEquals(1, open)
 
     driver.execute(null, "PRAGMA user_version", 0)
 
+    assertEquals(2, configure)
     assertEquals(1, create)
     assertEquals(0, update)
     assertEquals(2, open)
@@ -197,23 +208,27 @@ abstract class AndroidxSqliteCallbackTest {
 
   @Test
   fun `create is invoked once and open is invoked twice and update is invoked once when opening a new database closing it and then opening it again with a new version`() {
+    var configure = 0
     var create = 0
     var update = 0
     var open = 0
 
     var driver = setupDatabase(
       schema = schema,
+      onConfigure = { configure++ },
       onCreate = { create++ },
       onUpdate = { _, _ -> update++ },
       onOpen = { open++ },
     )
 
+    assertEquals(0, configure)
     assertEquals(0, create)
     assertEquals(0, update)
     assertEquals(0, open)
 
     driver.execute(null, "PRAGMA user_version", 0)
 
+    assertEquals(1, configure)
     assertEquals(1, create)
     assertEquals(0, update)
     assertEquals(1, open)
@@ -224,6 +239,7 @@ abstract class AndroidxSqliteCallbackTest {
     var toVersion = -1L
     driver = setupDatabase(
       schema = schemaWithUpdate,
+      onConfigure = { configure++ },
       onCreate = { create++ },
       onUpdate = { from, to ->
         fromVersion = from
@@ -233,6 +249,7 @@ abstract class AndroidxSqliteCallbackTest {
       onOpen = { open++ },
     )
 
+    assertEquals(1, configure)
     assertEquals(1, create)
     assertEquals(0, update)
     assertEquals(-1, fromVersion)
@@ -241,6 +258,7 @@ abstract class AndroidxSqliteCallbackTest {
 
     driver.execute(null, "PRAGMA user_version", 0)
 
+    assertEquals(2, configure)
     assertEquals(1, create)
     assertEquals(1, update)
     assertEquals(1, fromVersion)
