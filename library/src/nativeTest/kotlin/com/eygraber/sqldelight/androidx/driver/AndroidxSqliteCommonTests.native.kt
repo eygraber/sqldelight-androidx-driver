@@ -3,9 +3,6 @@ package com.eygraber.sqldelight.androidx.driver
 import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.SQLiteDriver
 import androidx.sqlite.driver.bundled.BundledSQLiteDriver
-import androidx.sqlite.driver.bundled.SQLITE_OPEN_CREATE
-import androidx.sqlite.driver.bundled.SQLITE_OPEN_FULLMUTEX
-import androidx.sqlite.driver.bundled.SQLITE_OPEN_READWRITE
 import app.cash.sqldelight.Transacter
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -29,7 +26,7 @@ actual class CommonEphemeralTest : AndroidxSqliteEphemeralTest()
 actual fun androidxSqliteTestDriver(): SQLiteDriver = BundledSQLiteDriver()
 
 actual fun androidxSqliteTestCreateConnection(): (String) -> SQLiteConnection = { name ->
-  BundledSQLiteDriver().open(name, SQLITE_OPEN_READWRITE or SQLITE_OPEN_CREATE or SQLITE_OPEN_FULLMUTEX)
+  BundledSQLiteDriver().open(name)
 }
 
 @Suppress("InjectDispatcher")
