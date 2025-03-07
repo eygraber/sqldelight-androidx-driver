@@ -47,7 +47,7 @@ abstract class AndroidxSqliteConcurrencyTest {
     onCreate: SqlDriver.() -> Unit,
     onUpdate: SqlDriver.(Long, Long) -> Unit,
     onOpen: SqlDriver.() -> Unit,
-    onConfigure: ConfigurableDatabase.() -> Unit = { enableWAL() },
+    onConfigure: ConfigurableDatabase.() -> Unit = { setJournalMode(SqliteJournalMode.WAL) },
   ): SqlDriver = AndroidxSqliteDriver(
     createConnection = androidxSqliteTestCreateConnection(),
     databaseType = AndroidxSqliteDatabaseType.File(dbName),
