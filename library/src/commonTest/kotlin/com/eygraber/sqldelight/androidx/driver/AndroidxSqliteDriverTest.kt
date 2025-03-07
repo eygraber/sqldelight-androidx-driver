@@ -70,7 +70,7 @@ abstract class AndroidxSqliteDriverTest {
       androidxSqliteTestDriver(),
       AndroidxSqliteDatabaseType.Memory,
       schema,
-      cacheSize = 1,
+      AndroidxSqliteConfiguration(cacheSize = 1),
     ).use(block)
   }
 

@@ -23,8 +23,6 @@ internal expect class TransactionsThreadLocal() {
   internal fun set(transaction: Transacter.Transaction?)
 }
 
-internal const val DEFAULT_CACHE_SIZE = 20
-
 /**
  * @param databaseType Specifies the type of the database file
  * (see [Sqlite open documentation](https://www.sqlite.org/c3ref/open.html)).
@@ -37,21 +35,19 @@ public class AndroidxSqliteDriver(
   createConnection: (String) -> SQLiteConnection,
   databaseType: AndroidxSqliteDatabaseType,
   private val schema: SqlSchema<QueryResult.Value<Unit>>,
-  readerConnections: Int = 0,
-  private val cacheSize: Int = DEFAULT_CACHE_SIZE,
+  private val configuration: AndroidxSqliteConfiguration = AndroidxSqliteConfiguration(),
   private val migrateEmptySchema: Boolean = false,
   private val onConfigure: ConfigurableDatabase.() -> Unit = {},
-  private val onCreate: SqlDriver.() -> Unit = {},
-  private val onUpdate: SqlDriver.(Long, Long) -> Unit = { _, _ -> },
-  private val onOpen: SqlDriver.() -> Unit = {},
+  private val onCreate: AndroidxSqliteDriver.() -> Unit = {},
+  private val onUpdate: AndroidxSqliteDriver.(Long, Long) -> Unit = { _, _ -> },
+  private val onOpen: AndroidxSqliteDriver.() -> Unit = {},
   vararg migrationCallbacks: AfterVersion,
 ) : SqlDriver {
   public constructor(
     driver: SQLiteDriver,
     databaseType: AndroidxSqliteDatabaseType,
     schema: SqlSchema<QueryResult.Value<Unit>>,
-    readerConnections: Int = 0,
-    cacheSize: Int = DEFAULT_CACHE_SIZE,
+    configuration: AndroidxSqliteConfiguration = AndroidxSqliteConfiguration(),
     migrateEmptySchema: Boolean = false,
     onConfigure: ConfigurableDatabase.() -> Unit = {},
     onCreate: SqlDriver.() -> Unit = {},
@@ -62,8 +58,7 @@ public class AndroidxSqliteDriver(
     createConnection = driver::open,
     databaseType = databaseType,
     schema = schema,
-    readerConnections = readerConnections,
-    cacheSize = cacheSize,
+    configuration = configuration,
     migrateEmptySchema = migrateEmptySchema,
     onConfigure = onConfigure,
     onCreate = onCreate,
@@ -83,11 +78,12 @@ public class AndroidxSqliteDriver(
         AndroidxSqliteDatabaseType.Memory -> ":memory:"
         AndroidxSqliteDatabaseType.Temporary -> ""
       },
-      maxReaders = when(databaseType) {
-        is AndroidxSqliteDatabaseType.File -> readerConnections
-        AndroidxSqliteDatabaseType.Memory -> 0
-        AndroidxSqliteDatabaseType.Temporary -> 0
+      isFileBased = when(databaseType) {
+        is AndroidxSqliteDatabaseType.File -> true
+        AndroidxSqliteDatabaseType.Memory -> false
+        AndroidxSqliteDatabaseType.Temporary -> false
       },
+      configuration = configuration,
     )
   }
 
@@ -99,7 +95,7 @@ public class AndroidxSqliteDriver(
     statementsCaches.getOrPut(
       connection,
     ) {
-      object : LruCache<Int, AndroidxStatement>(cacheSize) {
+      object : LruCache<Int, AndroidxStatement>(configuration.cacheSize) {
         override fun entryRemoved(
           evicted: Boolean,
           key: Int,
@@ -117,6 +113,51 @@ public class AndroidxSqliteDriver(
   private val listeners = linkedMapOf<String, MutableSet<Query.Listener>>()
 
   private val migrationCallbacks = migrationCallbacks
+
+  /**
+   * True if foreign key constraints are enabled.
+   *
+   * This function will block until all connections have been updated.
+   *
+   * An exception will be thrown if this is called from within a transaction.
+   */
+  public fun setForeignKeyConstraintsEnabled(isForeignKeyConstraintsEnabled: Boolean) {
+    check(currentTransaction() == null) {
+      "setForeignKeyConstraintsEnabled cannot be called from within a transaction"
+    }
+
+    connectionPool.setForeignKeyConstraintsEnabled(isForeignKeyConstraintsEnabled)
+  }
+
+  /**
+   * Journal mode to use.
+   *
+   * This function will block until all connections have been updated.
+   *
+   * An exception will be thrown if this is called from within a transaction.
+   */
+  public fun setJournalMode(journalMode: SqliteJournalMode) {
+    check(currentTransaction() == null) {
+      "setJournalMode cannot be called from within a transaction"
+    }
+
+    connectionPool.setJournalMode(journalMode)
+  }
+
+  /**
+   * Synchronous mode to use.
+   *
+   * This function will block until all connections have been updated.
+   *
+   * An exception will be thrown if this is called from within a transaction.
+   */
+  public fun setSync(sync: SqliteSync) {
+    check(currentTransaction() == null) {
+      "setSync cannot be called from within a transaction"
+    }
+
+    connectionPool.setSync(sync)
+  }
 
   override fun addListener(vararg queryKeys: String, listener: Query.Listener) {
     synchronized(listenersLock) {

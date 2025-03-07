@@ -4,39 +4,19 @@ import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlCursor
 import app.cash.sqldelight.db.SqlPreparedStatement
 
-public fun AndroidxSqliteDriver.enableForeignKeys() {
-  execute(null, "PRAGMA foreign_keys = ON;", 0, null)
-}
-
-public fun AndroidxSqliteDriver.disableForeignKeys() {
-  execute(null, "PRAGMA foreign_keys = OFF;", 0, null)
-}
-
-public fun AndroidxSqliteDriver.enableWAL() {
-  execute(null, "PRAGMA journal_mode = WAL;", 0, null)
-}
-
-public fun AndroidxSqliteDriver.disableWAL() {
-  execute(null, "PRAGMA journal_mode = DELETE;", 0, null)
-}
-
 public class ConfigurableDatabase(
   private val driver: AndroidxSqliteDriver,
 ) {
-  public fun enableForeignKeys() {
-    driver.enableForeignKeys()
+  public fun setForeignKeyConstraintsEnabled(isForeignKeyConstraintsEnabled: Boolean) {
+    driver.setForeignKeyConstraintsEnabled(isForeignKeyConstraintsEnabled)
   }
 
-  public fun disableForeignKeys() {
-    driver.disableForeignKeys()
+  public fun setJournalMode(journalMode: SqliteJournalMode) {
+    driver.setJournalMode(journalMode)
   }
 
-  public fun enableWAL() {
-    driver.enableWAL()
-  }
-
-  public fun disableWAL() {
-    driver.disableWAL()
+  public fun setSync(sync: SqliteSync) {
+    driver.setSync(sync)
   }
 
   public fun executePragma(
