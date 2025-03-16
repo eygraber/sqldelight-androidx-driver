@@ -23,10 +23,15 @@ internal class ConnectionPool(
     else -> 0
   }
 
-  private val readerChannel = Channel<SQLiteConnection>(capacity = maxReaderConnectionsCount)
-  private val readerConnections = List(maxReaderConnectionsCount) {
-    lazy {
-      createConnection(name).withConfiguration()
+  private val readerChannel = Channel<Lazy<SQLiteConnection>>(capacity = maxReaderConnectionsCount)
+
+  init {
+    repeat(maxReaderConnectionsCount) {
+      readerChannel.trySend(
+        lazy {
+          createConnection(name).withConfiguration()
+        },
+      )
     }
   }
 
@@ -53,8 +58,7 @@ internal class ConnectionPool(
   fun acquireReaderConnection() = when(maxReaderConnectionsCount) {
     0 -> acquireWriterConnection()
     else -> runBlocking {
-      val firstUninitialized = readerConnections.firstOrNull { !it.isInitialized() }
-      firstUninitialized?.value ?: readerChannel.receive()
+      readerChannel.receive().value
     }
   }
 
@@ -65,7 +69,7 @@ internal class ConnectionPool(
   fun releaseReaderConnection(connection: SQLiteConnection) = when(maxReaderConnectionsCount) {
     0 -> releaseWriterConnection()
     else -> runBlocking {
-      readerChannel.send(connection)
+      readerChannel.send(lazy { connection })
     }
   }
 
@@ -95,15 +99,12 @@ internal class ConnectionPool(
 
     if(maxReaderConnectionsCount > 0) {
       runBlocking {
-        val createdReadersCount = readerConnections.count { it.isInitialized() }
-        val readers = List(createdReadersCount) {
-          readerChannel.receive()
-        }
-        readers.forEach { reader ->
+        repeat(maxReaderConnectionsCount) {
+          val reader = readerChannel.receive()
           try {
-            reader.writePragma(sql)
+            reader.value.writePragma(sql)
           } finally {
-            releaseReaderConnection(reader)
+            releaseReaderConnection(reader.value)
           }
         }
       }
@@ -125,7 +126,8 @@ internal class ConnectionPool(
       writerMutex.withLock {
         writerConnection.close()
       }
-      readerConnections.forEach { reader ->
+      repeat(maxReaderConnectionsCount) {
+        val reader = readerChannel.receive()
         if(reader.isInitialized()) reader.value.close()
       }
       readerChannel.close()
