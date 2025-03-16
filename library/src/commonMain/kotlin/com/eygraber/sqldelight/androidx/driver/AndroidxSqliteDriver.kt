@@ -23,6 +23,13 @@ internal expect class TransactionsThreadLocal() {
   internal fun set(transaction: Transacter.Transaction?)
 }
 
+internal expect class StatementsCacheThreadLocal() {
+  internal fun get(): LruCache<Int, AndroidxStatement>?
+  internal fun set(cache: LruCache<Int, AndroidxStatement>?)
+
+  internal fun getAll(): List<LruCache<Int, AndroidxStatement>>
+}
+
 /**
  * @param databaseType Specifies the type of the database file
  * (see [Sqlite open documentation](https://www.sqlite.org/c3ref/open.html)).
@@ -89,13 +96,11 @@ public class AndroidxSqliteDriver(
 
   private val transactions = TransactionsThreadLocal()
 
-  private val statementsCaches = mutableMapOf<SQLiteConnection, LruCache<Int, AndroidxStatement>>()
+  private val statementsCaches = StatementsCacheThreadLocal()
 
-  private fun getStatementsCache(connection: SQLiteConnection): LruCache<Int, AndroidxStatement> =
-    statementsCaches.getOrPut(
-      connection,
-    ) {
-      object : LruCache<Int, AndroidxStatement>(configuration.cacheSize) {
+  private fun getStatementsCache(): LruCache<Int, AndroidxStatement> =
+    when(val cache = statementsCaches.get()) {
+      null -> object : LruCache<Int, AndroidxStatement>(configuration.cacheSize) {
         override fun entryRemoved(
           evicted: Boolean,
           key: Int,
@@ -104,7 +109,9 @@ public class AndroidxSqliteDriver(
         ) {
           if(evicted) oldValue.close()
         }
-      }
+      }.also { statementsCaches.set(it) }
+
+      else -> cache
     }
 
   private var skipStatementsCache = true
@@ -231,7 +238,7 @@ public class AndroidxSqliteDriver(
     binders: (SqlPreparedStatement.() -> Unit)?,
     result: AndroidxStatement.() -> T,
   ): QueryResult.Value<T> {
-    val statementsCache = if(!skipStatementsCache) getStatementsCache(connection) else null
+    val statementsCache = if(!skipStatementsCache) getStatementsCache() else null
     var statement: AndroidxStatement? = null
     if(identifier != null && statementsCache != null) {
       statement = statementsCache[identifier]
@@ -328,12 +335,15 @@ public class AndroidxSqliteDriver(
     }
   }
 
+  /**
+   * It is the caller's responsibility to ensure that no threads
+   * are using any of the connections starting from when close is invoked
+   */
   override fun close() {
-    statementsCaches.forEach { (_, cache) ->
+    statementsCaches.getAll().forEach { cache ->
       cache.snapshot().values.forEach { it.close() }
       cache.evictAll()
     }
-    statementsCaches.clear()
     connectionPool.close()
   }
 

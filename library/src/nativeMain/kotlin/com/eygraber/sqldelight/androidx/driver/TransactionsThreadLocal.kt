@@ -2,17 +2,11 @@ package com.eygraber.sqldelight.androidx.driver
 
 import androidx.collection.mutableIntObjectMapOf
 import app.cash.sqldelight.Transacter
-import kotlin.concurrent.AtomicInt
 import kotlin.native.concurrent.ThreadLocal
 
 @ThreadLocal
 private object ThreadLocalTransactions {
   val threadLocalMap = mutableIntObjectMapOf<Transacter.Transaction>()
-}
-
-private object ThreadLocalId {
-  val id = AtomicInt(0)
-  fun next(): Int = id.incrementAndGet()
 }
 
 internal actual class TransactionsThreadLocal actual constructor() {
