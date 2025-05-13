@@ -48,6 +48,7 @@ public class AndroidxSqliteDriver(
   private val onCreate: AndroidxSqliteDriver.() -> Unit = {},
   private val onUpdate: AndroidxSqliteDriver.(Long, Long) -> Unit = { _, _ -> },
   private val onOpen: AndroidxSqliteDriver.() -> Unit = {},
+  connectionPool: ConnectionPool? = null,
   vararg migrationCallbacks: AfterVersion,
 ) : SqlDriver {
   public constructor(
@@ -60,6 +61,7 @@ public class AndroidxSqliteDriver(
     onCreate: SqlDriver.() -> Unit = {},
     onUpdate: SqlDriver.(Long, Long) -> Unit = { _, _ -> },
     onOpen: SqlDriver.() -> Unit = {},
+    connectionPool: ConnectionPool? = null,
     vararg migrationCallbacks: AfterVersion,
   ) : this(
     createConnection = driver::open,
@@ -71,6 +73,7 @@ public class AndroidxSqliteDriver(
     onCreate = onCreate,
     onUpdate = onUpdate,
     onOpen = onOpen,
+    connectionPool = connectionPool,
     migrationCallbacks = migrationCallbacks,
   )
 
@@ -78,7 +81,7 @@ public class AndroidxSqliteDriver(
   private val isFirstInteraction = atomic(true)
 
   private val connectionPool by lazy {
-    ConnectionPool(
+    connectionPool ?: AndroidxDriverConnectionPool(
       createConnection = createConnection,
       name = when(databaseType) {
         is AndroidxSqliteDatabaseType.File -> databaseType.databaseFilePath
@@ -199,11 +202,11 @@ public class AndroidxSqliteDriver(
       else -> (enclosing as Transaction).connection
     }
     val transaction = Transaction(enclosing, transactionConnection)
-    transactions.set(transaction)
-
     if(enclosing == null) {
       transactionConnection.execSQL("BEGIN IMMEDIATE")
     }
+
+    transactions.set(transaction)
 
     return QueryResult.Value(transaction)
   }
