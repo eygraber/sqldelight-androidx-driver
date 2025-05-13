@@ -7,12 +7,22 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
-internal class ConnectionPool(
+public interface ConnectionPool : AutoCloseable {
+  public fun acquireWriterConnection(): SQLiteConnection
+  public fun releaseWriterConnection()
+  public fun acquireReaderConnection(): SQLiteConnection
+  public fun releaseReaderConnection(connection: SQLiteConnection)
+  public fun setForeignKeyConstraintsEnabled(isForeignKeyConstraintsEnabled: Boolean)
+  public fun setJournalMode(journalMode: SqliteJournalMode)
+  public fun setSync(sync: SqliteSync)
+}
+
+internal class AndroidxDriverConnectionPool(
   private val createConnection: (String) -> SQLiteConnection,
   private val name: String,
   private val isFileBased: Boolean,
   private val configuration: AndroidxSqliteConfiguration,
-) {
+) : ConnectionPool {
   private val writerConnection: SQLiteConnection by lazy {
     createConnection(name).withConfiguration()
   }
@@ -39,7 +49,7 @@ internal class ConnectionPool(
    * Acquires the writer connection, blocking if it's currently in use.
    * @return The writer SQLiteConnection
    */
-  fun acquireWriterConnection() = runBlocking {
+  override fun acquireWriterConnection() = runBlocking {
     writerMutex.lock()
     writerConnection
   }
@@ -47,7 +57,7 @@ internal class ConnectionPool(
   /**
    * Releases the writer connection (mutex unlocks automatically).
    */
-  fun releaseWriterConnection() {
+  override fun releaseWriterConnection() {
     writerMutex.unlock()
   }
 
@@ -55,7 +65,7 @@ internal class ConnectionPool(
    * Acquires a reader connection, blocking if none are available.
    * @return A reader SQLiteConnection
    */
-  fun acquireReaderConnection() = when(maxReaderConnectionsCount) {
+  override fun acquireReaderConnection() = when(maxReaderConnectionsCount) {
     0 -> acquireWriterConnection()
     else -> runBlocking {
       readerChannel.receive().value
@@ -66,25 +76,27 @@ internal class ConnectionPool(
    * Releases a reader connection back to the pool.
    * @param connection The SQLiteConnection to release
    */
-  fun releaseReaderConnection(connection: SQLiteConnection) = when(maxReaderConnectionsCount) {
-    0 -> releaseWriterConnection()
-    else -> runBlocking {
-      readerChannel.send(lazy { connection })
+  override fun releaseReaderConnection(connection: SQLiteConnection) {
+    when(maxReaderConnectionsCount) {
+      0 -> releaseWriterConnection()
+      else -> runBlocking {
+        readerChannel.send(lazy { connection })
+      }
     }
   }
 
-  fun setForeignKeyConstraintsEnabled(isForeignKeyConstraintsEnabled: Boolean) {
+  override fun setForeignKeyConstraintsEnabled(isForeignKeyConstraintsEnabled: Boolean) {
     configuration.isForeignKeyConstraintsEnabled = isForeignKeyConstraintsEnabled
     val foreignKeys = if(isForeignKeyConstraintsEnabled) "ON" else "OFF"
     runPragmaOnAllConnections("PRAGMA foreign_keys = $foreignKeys;")
   }
 
-  fun setJournalMode(journalMode: SqliteJournalMode) {
+  override fun setJournalMode(journalMode: SqliteJournalMode) {
     configuration.journalMode = journalMode
     runPragmaOnAllConnections("PRAGMA journal_mode = ${configuration.journalMode.value};")
   }
 
-  fun setSync(sync: SqliteSync) {
+  override fun setSync(sync: SqliteSync) {
     configuration.sync = sync
     runPragmaOnAllConnections("PRAGMA synchronous = ${configuration.sync.value};")
   }
@@ -121,7 +133,7 @@ internal class ConnectionPool(
   /**
    * Closes all connections in the pool.
    */
-  fun close() {
+  override fun close() {
     runBlocking {
       writerMutex.withLock {
         writerConnection.close()

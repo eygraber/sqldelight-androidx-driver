@@ -1,5 +1,6 @@
 package com.eygraber.sqldelight.androidx.driver
 
+import androidx.sqlite.SQLiteConnection
 import app.cash.sqldelight.TransacterImpl
 import app.cash.sqldelight.db.AfterVersion
 import app.cash.sqldelight.db.QueryResult
@@ -9,7 +10,9 @@ import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFails
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 abstract class AndroidxSqliteTransacterTest {
@@ -18,7 +21,13 @@ abstract class AndroidxSqliteTransacterTest {
 
   private fun setupDatabase(
     schema: SqlSchema<QueryResult.Value<Unit>>,
-  ): SqlDriver = AndroidxSqliteDriver(androidxSqliteTestDriver(), AndroidxSqliteDatabaseType.Memory, schema)
+    connectionPool: ConnectionPool? = null,
+  ): SqlDriver = AndroidxSqliteDriver(
+    driver = androidxSqliteTestDriver(),
+    databaseType = AndroidxSqliteDatabaseType.Memory,
+    schema = schema,
+    connectionPool = connectionPool,
+  )
 
   @BeforeTest
   fun setup() {
@@ -41,6 +50,32 @@ abstract class AndroidxSqliteTransacterTest {
   @AfterTest
   fun teardown() {
     driver.close()
+  }
+
+  @Test
+  fun ifBeginningANonEnclosedTransactionFails_furtherTransactionsAreNotBlockedFromBeginning() {
+    this.driver.close()
+
+    val driver = setupDatabase(
+      object : SqlSchema<QueryResult.Value<Unit>> {
+        override val version = 1L
+        override fun create(driver: SqlDriver): QueryResult.Value<Unit> = QueryResult.Unit
+        override fun migrate(
+          driver: SqlDriver,
+          oldVersion: Long,
+          newVersion: Long,
+          vararg callbacks: AfterVersion,
+        ): QueryResult.Value<Unit> = QueryResult.Unit
+      },
+      connectionPool = FirstTransactionsFailConnectionPool(),
+    )
+    val transacter = object : TransacterImpl(driver) {}
+    this.driver = driver
+    assertFails {
+      transacter.transaction(noEnclosing = true) {}
+    }
+    assertNull(driver.currentTransaction())
+    transacter.transaction(noEnclosing = true) {}
   }
 
   @Test
@@ -281,4 +316,36 @@ abstract class AndroidxSqliteTransacterTest {
       block = { rollback(Unit) },
     )
   }
+}
+
+private class FirstTransactionsFailConnectionPool : ConnectionPool {
+  private val firstTransactionFailConnection = object : SQLiteConnection {
+    private var isFirstBeginTransaction = true
+
+    private val connection = androidxSqliteTestDriver().open(":memory:")
+
+    override fun close() {
+      connection.close()
+    }
+
+    override fun prepare(sql: String) =
+      if(sql == "BEGIN IMMEDIATE" && isFirstBeginTransaction) {
+        isFirstBeginTransaction = false
+        error("Throwing an error")
+      }
+      else {
+        connection.prepare(sql)
+      }
+  }
+
+  override fun close() {
+    firstTransactionFailConnection.close()
+  }
+  override fun acquireWriterConnection() = firstTransactionFailConnection
+  override fun releaseWriterConnection() {}
+  override fun acquireReaderConnection() = firstTransactionFailConnection
+  override fun releaseReaderConnection(connection: SQLiteConnection) {}
+  override fun setForeignKeyConstraintsEnabled(isForeignKeyConstraintsEnabled: Boolean) {}
+  override fun setJournalMode(journalMode: SqliteJournalMode) {}
+  override fun setSync(sync: SqliteSync) {}
 }
