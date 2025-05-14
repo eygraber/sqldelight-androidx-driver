@@ -24,7 +24,7 @@ ktlint = "1.5.0"
 
 okio = "3.11.0"
 
-publish = "0.31.0"
+publish = "0.32.0"
 
 [plugins]
 atomicfu = { id = "org.jetbrains.kotlinx.atomicfu", version.ref = "atomicfu" }
