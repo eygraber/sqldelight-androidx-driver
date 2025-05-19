@@ -23,13 +23,6 @@ internal expect class TransactionsThreadLocal() {
   internal fun set(transaction: Transacter.Transaction?)
 }
 
-internal expect class StatementsCacheThreadLocal() {
-  internal fun get(): LruCache<Int, AndroidxStatement>?
-  internal fun set(cache: LruCache<Int, AndroidxStatement>?)
-
-  internal fun getAll(): List<LruCache<Int, AndroidxStatement>>
-}
-
 /**
  * @param databaseType Specifies the type of the database file
  * (see [Sqlite open documentation](https://www.sqlite.org/c3ref/open.html)).
@@ -99,22 +92,16 @@ public class AndroidxSqliteDriver(
 
   private val transactions = TransactionsThreadLocal()
 
-  private val statementsCaches = StatementsCacheThreadLocal()
-
-  private fun getStatementsCache(): LruCache<Int, AndroidxStatement> =
-    when(val cache = statementsCaches.get()) {
-      null -> object : LruCache<Int, AndroidxStatement>(configuration.cacheSize) {
-        override fun entryRemoved(
-          evicted: Boolean,
-          key: Int,
-          oldValue: AndroidxStatement,
-          newValue: AndroidxStatement?,
-        ) {
-          if(evicted) oldValue.close()
-        }
-      }.also { statementsCaches.set(it) }
-
-      else -> cache
+  private val statementsCache =
+    object : LruCache<Int, AndroidxStatement>(configuration.cacheSize) {
+      override fun entryRemoved(
+        evicted: Boolean,
+        key: Int,
+        oldValue: AndroidxStatement,
+        newValue: AndroidxStatement?,
+      ) {
+        if(evicted) oldValue.close()
+      }
     }
 
   private var skipStatementsCache = true
@@ -241,15 +228,11 @@ public class AndroidxSqliteDriver(
     binders: (SqlPreparedStatement.() -> Unit)?,
     result: AndroidxStatement.() -> T,
   ): QueryResult.Value<T> {
-    val statementsCache = if(!skipStatementsCache) getStatementsCache() else null
+    val statementsCache = if(!skipStatementsCache) statementsCache else null
     var statement: AndroidxStatement? = null
     if(identifier != null && statementsCache != null) {
-      statement = statementsCache[identifier]
-
-      // remove temporarily from the cache
-      if(statement != null) {
-        statementsCache.remove(identifier)
-      }
+      // remove temporarily from the cache if present
+      statement = statementsCache.remove(identifier)
     }
     if(statement == null) {
       statement = createStatement(connection)
@@ -261,8 +244,12 @@ public class AndroidxSqliteDriver(
       return QueryResult.Value(statement.result())
     } finally {
       if(identifier != null && !skipStatementsCache) {
-        statementsCache?.put(identifier, statement)?.close()
         statement.reset()
+
+        // put the statement back in the cache
+        // closing any statement with this identifier
+        // that was put into the cache while we used this one
+        statementsCache?.put(identifier, statement)?.close()
       } else {
         statement.close()
       }
@@ -343,10 +330,7 @@ public class AndroidxSqliteDriver(
    * are using any of the connections starting from when close is invoked
    */
   override fun close() {
-    statementsCaches.getAll().forEach { cache ->
-      cache.snapshot().values.forEach { it.close() }
-      cache.evictAll()
-    }
+    statementsCache.evictAll()
     connectionPool.close()
   }
 
