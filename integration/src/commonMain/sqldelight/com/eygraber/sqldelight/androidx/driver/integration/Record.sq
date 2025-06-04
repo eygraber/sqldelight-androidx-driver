@@ -1,0 +1,19 @@
+CREATE TABLE Record(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  userId TEXT NOT NULL,
+  record BLOB NOT NULL
+);
+
+CREATE INDEX IndexRecordUserId ON Record(userId);
+
+insert:
+INSERT INTO Record(userId, record) VALUES (:userId, :withRecord);
+
+top:
+SELECT * FROM Record ORDER BY id ASC LIMIT 1;
+
+delete:
+DELETE FROM Record WHERE id = :whereId;
+
+countForUser:
+SELECT COUNT(*) FROM Record WHERE userId = :whereUserId;

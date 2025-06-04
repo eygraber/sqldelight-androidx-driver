@@ -51,6 +51,7 @@ plugins {
 
 rootProject.name = "sqldelight-androidx-driver"
 
+include(":integration")
 include(":library")
 
 enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
