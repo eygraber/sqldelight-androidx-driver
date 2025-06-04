@@ -121,11 +121,15 @@ abstract class AndroidxSqliteCallbackTest {
   @BeforeTest
   fun clearNamedDb() {
     deleteFile(dbName)
+    deleteFile("$dbName-shm")
+    deleteFile("$dbName-wal")
   }
 
   @AfterTest
   fun clearNamedDbPostTests() {
     deleteFile(dbName)
+    deleteFile("$dbName-shm")
+    deleteFile("$dbName-wal")
   }
 
   @Test
