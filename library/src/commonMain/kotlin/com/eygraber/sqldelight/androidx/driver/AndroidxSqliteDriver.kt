@@ -92,16 +92,25 @@ public class AndroidxSqliteDriver(
 
   private val transactions = TransactionsThreadLocal()
 
-  private val statementsCache =
-    object : LruCache<Int, AndroidxStatement>(configuration.cacheSize) {
-      override fun entryRemoved(
-        evicted: Boolean,
-        key: Int,
-        oldValue: AndroidxStatement,
-        newValue: AndroidxStatement?,
-      ) {
-        if(evicted) oldValue.close()
-      }
+  private val statementsCache = HashMap<SQLiteConnection, LruCache<Int, AndroidxStatement>>()
+
+  private fun getStatementCache(connection: SQLiteConnection) =
+    when {
+      configuration.cacheSize > 0 ->
+        statementsCache.getOrPut(connection) {
+          object : LruCache<Int, AndroidxStatement>(configuration.cacheSize) {
+            override fun entryRemoved(
+              evicted: Boolean,
+              key: Int,
+              oldValue: AndroidxStatement,
+              newValue: AndroidxStatement?,
+            ) {
+              if(evicted) oldValue.close()
+            }
+          }
+        }
+
+      else -> null
     }
 
   private var skipStatementsCache = true
@@ -228,7 +237,7 @@ public class AndroidxSqliteDriver(
     binders: (SqlPreparedStatement.() -> Unit)?,
     result: AndroidxStatement.() -> T,
   ): QueryResult.Value<T> {
-    val statementsCache = if(!skipStatementsCache) statementsCache else null
+    val statementsCache = if(!skipStatementsCache) getStatementCache(connection) else null
     var statement: AndroidxStatement? = null
     if(identifier != null && statementsCache != null) {
       // remove temporarily from the cache if present
@@ -271,7 +280,12 @@ public class AndroidxSqliteDriver(
         return execute(
           identifier = identifier,
           connection = writerConnection,
-          createStatement = { AndroidxPreparedStatement(it.prepare(sql)) },
+          createStatement = { c ->
+            AndroidxPreparedStatement(
+              sql = sql,
+              statement = c.prepare(sql),
+            )
+          },
           binders = binders,
           result = { execute() },
         )
@@ -283,7 +297,12 @@ public class AndroidxSqliteDriver(
       return execute(
         identifier = identifier,
         connection = connection,
-        createStatement = { AndroidxPreparedStatement(it.prepare(sql)) },
+        createStatement = { c ->
+          AndroidxPreparedStatement(
+            sql = sql,
+            statement = c.prepare(sql),
+          )
+        },
         binders = binders,
         result = { execute() },
       )
@@ -306,7 +325,13 @@ public class AndroidxSqliteDriver(
         return execute(
           identifier = identifier,
           connection = connection,
-          createStatement = { AndroidxQuery(sql, it, parameters) },
+          createStatement = { c ->
+            AndroidxQuery(
+              sql = sql,
+              statement = c.prepare(sql),
+              argCount = parameters,
+            )
+          },
           binders = binders,
           result = { executeQuery(mapper) },
         )
@@ -318,7 +343,13 @@ public class AndroidxSqliteDriver(
       return execute(
         identifier = identifier,
         connection = connection,
-        createStatement = { AndroidxQuery(sql, it, parameters) },
+        createStatement = { c ->
+          AndroidxQuery(
+            sql = sql,
+            statement = c.prepare(sql),
+            argCount = parameters,
+          )
+        },
         binders = binders,
         result = { executeQuery(mapper) },
       )
@@ -330,7 +361,8 @@ public class AndroidxSqliteDriver(
    * are using any of the connections starting from when close is invoked
    */
   override fun close() {
-    statementsCache.evictAll()
+    statementsCache.values.forEach { it.evictAll() }
+    statementsCache.clear()
     connectionPool.close()
   }
 
@@ -365,7 +397,7 @@ public class AndroidxSqliteDriver(
                 0L -> schema.create(driver).value
                 else -> schema.migrate(driver, currentVersion, schema.version, *migrationCallbacks).value
               }
-              skipStatementsCache = false
+              skipStatementsCache = configuration.cacheSize == 0
               when(currentVersion) {
                 0L -> onCreate()
                 else -> onUpdate(currentVersion, schema.version)
@@ -373,7 +405,7 @@ public class AndroidxSqliteDriver(
               writerConnection.prepare("PRAGMA user_version = ${schema.version}").use { it.step() }
             }
           } else {
-            skipStatementsCache = false
+            skipStatementsCache = configuration.cacheSize == 0
           }
 
           onOpen()
@@ -393,6 +425,7 @@ internal interface AndroidxStatement : SqlPreparedStatement {
 }
 
 private class AndroidxPreparedStatement(
+  private val sql: String,
   private val statement: SQLiteStatement,
 ) : AndroidxStatement {
   override fun bindBytes(index: Int, bytes: ByteArray?) {
@@ -430,6 +463,8 @@ private class AndroidxPreparedStatement(
     return statement.getColumnCount().toLong()
   }
 
+  override fun toString() = sql
+
   override fun reset() {
     statement.reset()
   }
@@ -441,7 +476,7 @@ private class AndroidxPreparedStatement(
 
 private class AndroidxQuery(
   private val sql: String,
-  private val connection: SQLiteConnection,
+  private val statement: SQLiteStatement,
   argCount: Int,
 ) : AndroidxStatement {
   private val binds = MutableList<((SQLiteStatement) -> Unit)?>(argCount) { null }
@@ -477,23 +512,22 @@ private class AndroidxQuery(
   override fun execute() = throw UnsupportedOperationException()
 
   override fun <R> executeQuery(mapper: (SqlCursor) -> QueryResult<R>): R {
-    val statement = connection.prepare(sql)
     for(action in binds) {
       requireNotNull(action).invoke(statement)
     }
 
-    return try {
-      mapper(AndroidxCursor(statement)).value
-    } finally {
-      statement.close()
-    }
+    return mapper(AndroidxCursor(statement)).value
   }
 
   override fun toString() = sql
 
-  override fun reset() {}
+  override fun reset() {
+    statement.reset()
+  }
 
-  override fun close() {}
+  override fun close() {
+    statement.close()
+  }
 }
 
 private class AndroidxCursor(
