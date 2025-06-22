@@ -62,4 +62,4 @@ test-junit = { module = "junit:junit", version = "4.13.2" }
 test-kotlin = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin" }
 test-kotlin-junit = { module = "org.jetbrains.kotlin:kotlin-test-junit", version.ref = "kotlin" }
 test-kotlinx-coroutines = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "kotlinx-coroutines" }
-test-robolectric = { module = "org.robolectric:robolectric", version = "4.15" }
+test-robolectric = { module = "org.robolectric:robolectric", version = "4.15.1" }
