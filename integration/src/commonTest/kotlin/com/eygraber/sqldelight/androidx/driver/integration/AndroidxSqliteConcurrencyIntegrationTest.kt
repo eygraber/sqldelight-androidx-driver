@@ -2,6 +2,7 @@ package com.eygraber.sqldelight.androidx.driver.integration
 
 import app.cash.sqldelight.coroutines.asFlow
 import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteConfiguration
+import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteDatabaseType
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
@@ -13,6 +14,8 @@ import kotlin.random.Random
 import kotlin.test.Test
 
 class AndroidxSqliteConcurrencyIntegrationTest : AndroidxSqliteIntegrationTest() {
+  override var type: AndroidxSqliteDatabaseType = AndroidxSqliteDatabaseType.File("concurrency_integration.db")
+
   @Test
   fun concurrentQueriesWithMultipleReadersDoNotShareCachedStatementsAcrossConnections() = runTest {
     // having 2 readers instead of the default 4 makes it more

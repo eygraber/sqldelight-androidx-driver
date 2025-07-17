@@ -4,8 +4,8 @@ import app.cash.sqldelight.db.AfterVersion
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.db.SqlSchema
-import kotlin.test.AfterTest
-import kotlin.test.BeforeTest
+import kotlin.random.Random
+import kotlin.random.nextULong
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -100,36 +100,44 @@ abstract class AndroidxSqliteCallbackTest {
     }
   }
 
-  private val dbName = "com.eygraber.sqldelight.androidx.driver.test.db"
-
-  private fun setupDatabase(
+  private inline fun withDatabase(
     schema: SqlSchema<QueryResult.Value<Unit>>,
-    onConfigure: ConfigurableDatabase.() -> Unit,
-    onCreate: SqlDriver.() -> Unit,
-    onUpdate: SqlDriver.(Long, Long) -> Unit,
-    onOpen: SqlDriver.() -> Unit,
-  ): SqlDriver = AndroidxSqliteDriver(
-    driver = androidxSqliteTestDriver(),
-    databaseType = AndroidxSqliteDatabaseType.File(dbName),
-    schema = schema,
-    onConfigure = onConfigure,
-    onCreate = onCreate,
-    onUpdate = onUpdate,
-    onOpen = onOpen,
-  )
+    dbName: String,
+    noinline onConfigure: ConfigurableDatabase.() -> Unit,
+    noinline onCreate: SqlDriver.() -> Unit,
+    noinline onUpdate: SqlDriver.(Long, Long) -> Unit,
+    noinline onOpen: SqlDriver.() -> Unit,
+    deleteDbBeforeRun: Boolean = true,
+    deleteDbAfterRun: Boolean = true,
+    test: SqlDriver.() -> Unit,
+  ) {
+    val fullDbName = "${this::class.qualifiedName}.$dbName.db"
 
-  @BeforeTest
-  fun clearNamedDb() {
-    deleteFile(dbName)
-    deleteFile("$dbName-shm")
-    deleteFile("$dbName-wal")
-  }
+    if(deleteDbBeforeRun) {
+      deleteFile(fullDbName)
+      deleteFile("$fullDbName-shm")
+      deleteFile("$fullDbName-wal")
+    }
 
-  @AfterTest
-  fun clearNamedDbPostTests() {
-    deleteFile(dbName)
-    deleteFile("$dbName-shm")
-    deleteFile("$dbName-wal")
+    val result = runCatching {
+      AndroidxSqliteDriver(
+        driver = androidxSqliteTestDriver(),
+        databaseType = AndroidxSqliteDatabaseType.File(fullDbName),
+        schema = schema,
+        onConfigure = onConfigure,
+        onCreate = onCreate,
+        onUpdate = onUpdate,
+        onOpen = onOpen,
+      ).test()
+    }
+
+    if(deleteDbAfterRun || result.isFailure) {
+      deleteFile(fullDbName)
+      deleteFile("$fullDbName-shm")
+      deleteFile("$fullDbName-wal")
+    }
+
+    if(result.isFailure) result.getOrThrow()
   }
 
   @Test
@@ -139,25 +147,26 @@ abstract class AndroidxSqliteCallbackTest {
     var update = 0
     var open = 0
 
-    val driver = setupDatabase(
+    withDatabase(
       schema = schema,
+      dbName = Random.nextULong().toHexString(),
       onConfigure = { configure++ },
       onCreate = { create++ },
       onUpdate = { _, _ -> update++ },
       onOpen = { open++ },
-    )
+    ) {
+      assertEquals(0, configure)
+      assertEquals(0, create)
+      assertEquals(0, update)
+      assertEquals(0, open)
 
-    assertEquals(0, configure)
-    assertEquals(0, create)
-    assertEquals(0, update)
-    assertEquals(0, open)
+      execute(null, "PRAGMA user_version", 0)
 
-    driver.execute(null, "PRAGMA user_version", 0)
-
-    assertEquals(1, configure)
-    assertEquals(1, create)
-    assertEquals(0, update)
-    assertEquals(1, open)
+      assertEquals(1, configure)
+      assertEquals(1, create)
+      assertEquals(0, update)
+      assertEquals(1, open)
+    }
   }
 
   @Test
@@ -167,47 +176,53 @@ abstract class AndroidxSqliteCallbackTest {
     var update = 0
     var open = 0
 
-    var driver = setupDatabase(
+    val dbName = Random.nextULong().toHexString()
+
+    withDatabase(
       schema = schema,
+      dbName = dbName,
       onConfigure = { configure++ },
       onCreate = { create++ },
       onUpdate = { _, _ -> update++ },
       onOpen = { open++ },
-    )
+      deleteDbAfterRun = false,
+    ) {
+      assertEquals(0, configure)
+      assertEquals(0, create)
+      assertEquals(0, update)
+      assertEquals(0, open)
 
-    assertEquals(0, configure)
-    assertEquals(0, create)
-    assertEquals(0, update)
-    assertEquals(0, open)
+      execute(null, "PRAGMA user_version", 0)
 
-    driver.execute(null, "PRAGMA user_version", 0)
+      assertEquals(1, configure)
+      assertEquals(1, create)
+      assertEquals(0, update)
+      assertEquals(1, open)
 
-    assertEquals(1, configure)
-    assertEquals(1, create)
-    assertEquals(0, update)
-    assertEquals(1, open)
+      close()
+    }
 
-    driver.close()
-
-    driver = setupDatabase(
+    withDatabase(
       schema = schema,
+      dbName = dbName,
       onConfigure = { configure++ },
       onCreate = { create++ },
       onUpdate = { _, _ -> update++ },
       onOpen = { open++ },
-    )
+      deleteDbBeforeRun = false,
+    ) {
+      assertEquals(1, configure)
+      assertEquals(1, create)
+      assertEquals(0, update)
+      assertEquals(1, open)
 
-    assertEquals(1, configure)
-    assertEquals(1, create)
-    assertEquals(0, update)
-    assertEquals(1, open)
+      execute(null, "PRAGMA user_version", 0)
 
-    driver.execute(null, "PRAGMA user_version", 0)
-
-    assertEquals(2, configure)
-    assertEquals(1, create)
-    assertEquals(0, update)
-    assertEquals(2, open)
+      assertEquals(2, configure)
+      assertEquals(1, create)
+      assertEquals(0, update)
+      assertEquals(2, open)
+    }
   }
 
   @Test
@@ -217,32 +232,37 @@ abstract class AndroidxSqliteCallbackTest {
     var update = 0
     var open = 0
 
-    var driver = setupDatabase(
+    val dbName = Random.nextULong().toHexString()
+
+    withDatabase(
       schema = schema,
+      dbName = dbName,
       onConfigure = { configure++ },
       onCreate = { create++ },
       onUpdate = { _, _ -> update++ },
       onOpen = { open++ },
-    )
+      deleteDbAfterRun = false,
+    ) {
+      assertEquals(0, configure)
+      assertEquals(0, create)
+      assertEquals(0, update)
+      assertEquals(0, open)
 
-    assertEquals(0, configure)
-    assertEquals(0, create)
-    assertEquals(0, update)
-    assertEquals(0, open)
+      execute(null, "PRAGMA user_version", 0)
 
-    driver.execute(null, "PRAGMA user_version", 0)
+      assertEquals(1, configure)
+      assertEquals(1, create)
+      assertEquals(0, update)
+      assertEquals(1, open)
 
-    assertEquals(1, configure)
-    assertEquals(1, create)
-    assertEquals(0, update)
-    assertEquals(1, open)
-
-    driver.close()
+      close()
+    }
 
     var fromVersion = -1L
     var toVersion = -1L
-    driver = setupDatabase(
+    withDatabase(
       schema = schemaWithUpdate,
+      dbName = dbName,
       onConfigure = { configure++ },
       onCreate = { create++ },
       onUpdate = { from, to ->
@@ -251,22 +271,23 @@ abstract class AndroidxSqliteCallbackTest {
         update++
       },
       onOpen = { open++ },
-    )
+      deleteDbBeforeRun = false,
+    ) {
+      assertEquals(1, configure)
+      assertEquals(1, create)
+      assertEquals(0, update)
+      assertEquals(-1, fromVersion)
+      assertEquals(-1, toVersion)
+      assertEquals(1, open)
 
-    assertEquals(1, configure)
-    assertEquals(1, create)
-    assertEquals(0, update)
-    assertEquals(-1, fromVersion)
-    assertEquals(-1, toVersion)
-    assertEquals(1, open)
+      execute(null, "PRAGMA user_version", 0)
 
-    driver.execute(null, "PRAGMA user_version", 0)
-
-    assertEquals(2, configure)
-    assertEquals(1, create)
-    assertEquals(1, update)
-    assertEquals(1, fromVersion)
-    assertEquals(2, toVersion)
-    assertEquals(2, open)
+      assertEquals(2, configure)
+      assertEquals(1, create)
+      assertEquals(1, update)
+      assertEquals(1, fromVersion)
+      assertEquals(2, toVersion)
+      assertEquals(2, open)
+    }
   }
 }
