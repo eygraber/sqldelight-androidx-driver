@@ -18,7 +18,7 @@ import kotlinx.coroutines.withContext
 import kotlin.test.AfterTest
 
 abstract class AndroidxSqliteIntegrationTest {
-  open var type: AndroidxSqliteDatabaseType = AndroidxSqliteDatabaseType.File("test.db")
+  abstract var type: AndroidxSqliteDatabaseType
 
   @OptIn(ExperimentalCoroutinesApi::class, DelicateCoroutinesApi::class)
   private fun readDispatcher(): CoroutineDispatcher? = when {

@@ -6,8 +6,8 @@ import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlCursor
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.db.SqlSchema
-import kotlin.test.AfterTest
-import kotlin.test.BeforeTest
+import kotlin.random.Random
+import kotlin.random.nextULong
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -54,72 +54,118 @@ abstract class AndroidxSqliteEphemeralTest {
     )
   }
 
-  private val dbName = "com.eygraber.sqldelight.androidx.driver.test.db"
-
-  private fun setupDatabase(
+  private inline fun withDatabase(
     type: Type,
-  ): SqlDriver = when(type) {
-    Type.IN_MEMORY -> AndroidxSqliteDriver(androidxSqliteTestDriver(), AndroidxSqliteDatabaseType.Memory, schema)
-    Type.NAMED -> AndroidxSqliteDriver(androidxSqliteTestDriver(), AndroidxSqliteDatabaseType.File(dbName), schema)
-    Type.TEMPORARY -> AndroidxSqliteDriver(androidxSqliteTestDriver(), AndroidxSqliteDatabaseType.Temporary, schema)
-  }
+    dbName: String? = null,
+    deleteDbBeforeRun: Boolean = true,
+    deleteDbAfterRun: Boolean = true,
+    test: SqlDriver.() -> Unit,
+  ) {
+    val fullDbName = when(dbName) {
+      null -> null
+      else -> "${this::class.qualifiedName}.$dbName.db"
+    }
 
-  @BeforeTest
-  fun clearNamedDb() {
-    deleteFile(dbName)
-    deleteFile("$dbName-shm")
-    deleteFile("$dbName-wal")
-  }
+    if(fullDbName != null && deleteDbBeforeRun) {
+      deleteFile(fullDbName)
+      deleteFile("$fullDbName-shm")
+      deleteFile("$fullDbName-wal")
+    }
 
-  @AfterTest
-  fun clearNamedDbPostTests() {
-    deleteFile(dbName)
-    deleteFile("$dbName-shm")
-    deleteFile("$dbName-wal")
+    val result = runCatching {
+      when(type) {
+        Type.IN_MEMORY -> AndroidxSqliteDriver(androidxSqliteTestDriver(), AndroidxSqliteDatabaseType.Memory, schema)
+        Type.NAMED -> AndroidxSqliteDriver(
+          androidxSqliteTestDriver(),
+          AndroidxSqliteDatabaseType.File(requireNotNull(fullDbName)),
+          schema,
+        )
+
+        Type.TEMPORARY -> AndroidxSqliteDriver(androidxSqliteTestDriver(), AndroidxSqliteDatabaseType.Temporary, schema)
+      }.test()
+    }
+
+    if(fullDbName != null && (deleteDbAfterRun || result.isFailure)) {
+      deleteFile(fullDbName)
+      deleteFile("$fullDbName-shm")
+      deleteFile("$fullDbName-wal")
+    }
+
+    if(result.isFailure) result.getOrThrow()
   }
 
   @Test
   fun inMemoryCreatesIndependentDatabase() {
     val data1 = TestData(1, "val1")
-    val driver1 = setupDatabase(Type.IN_MEMORY)
-    driver1.insertTestData(data1)
-    assertEquals(data1, driver1.testDataQuery().executeAsOne())
+    withDatabase(Type.IN_MEMORY) {
+      val driver1 = this
+      driver1.insertTestData(data1)
+      assertEquals(data1, driver1.testDataQuery().executeAsOne())
 
-    val driver2 = setupDatabase(Type.IN_MEMORY)
-    assertNull(driver2.testDataQuery().executeAsOneOrNull())
-    driver1.close()
-    driver2.close()
+      withDatabase(Type.IN_MEMORY) {
+        val driver2 = this
+        assertNull(driver2.testDataQuery().executeAsOneOrNull())
+        driver1.close()
+        driver2.close()
+      }
+    }
   }
 
   @Test
   fun temporaryCreatesIndependentDatabase() {
     val data1 = TestData(1, "val1")
-    val driver1 = setupDatabase(Type.TEMPORARY)
-    driver1.insertTestData(data1)
-    assertEquals(data1, driver1.testDataQuery().executeAsOne())
+    withDatabase(Type.TEMPORARY) {
+      val driver1 = this
+      driver1.insertTestData(data1)
+      assertEquals(data1, driver1.testDataQuery().executeAsOne())
 
-    val driver2 = setupDatabase(Type.TEMPORARY)
-    assertNull(driver2.testDataQuery().executeAsOneOrNull())
-    driver1.close()
-    driver2.close()
+      withDatabase(Type.TEMPORARY) {
+        val driver2 = this
+        assertNull(driver2.testDataQuery().executeAsOneOrNull())
+        driver1.close()
+        driver2.close()
+      }
+    }
   }
 
   @Test
   fun namedCreatesSharedDatabase() {
+    val dbName = Random.nextULong().toHexString()
+
     val data1 = TestData(1, "val1")
-    val driver1 = setupDatabase(Type.NAMED)
-    driver1.insertTestData(data1)
-    assertEquals(data1, driver1.testDataQuery().executeAsOne())
+    withDatabase(
+      type = Type.NAMED,
+      dbName = dbName,
+    ) {
+      val driver1 = this
 
-    val driver2 = setupDatabase(Type.NAMED)
-    assertEquals(data1, driver2.testDataQuery().executeAsOne())
-    driver1.close()
-    assertEquals(data1, driver2.testDataQuery().executeAsOne())
-    driver2.close()
+      driver1.insertTestData(data1)
+      assertEquals(data1, driver1.testDataQuery().executeAsOne())
 
-    val driver3 = setupDatabase(Type.NAMED)
-    assertEquals(data1, driver3.testDataQuery().executeAsOne())
-    driver3.close()
+      withDatabase(
+        type = Type.NAMED,
+        dbName = dbName,
+        deleteDbBeforeRun = false,
+      ) {
+        val driver2 = this
+
+        assertEquals(data1, driver2.testDataQuery().executeAsOne())
+        driver1.close()
+        assertEquals(data1, driver2.testDataQuery().executeAsOne())
+        driver2.close()
+
+        withDatabase(
+          type = Type.NAMED,
+          dbName = dbName,
+          deleteDbBeforeRun = false,
+        ) {
+          val driver3 = this
+
+          assertEquals(data1, driver3.testDataQuery().executeAsOne())
+          driver3.close()
+        }
+      }
+    }
   }
 
   private fun SqlDriver.insertTestData(testData: TestData) {

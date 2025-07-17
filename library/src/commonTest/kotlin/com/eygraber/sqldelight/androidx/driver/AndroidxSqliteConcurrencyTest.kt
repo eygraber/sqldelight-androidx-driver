@@ -9,8 +9,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
-import kotlin.test.AfterTest
-import kotlin.test.BeforeTest
+import kotlin.random.Random
+import kotlin.random.nextULong
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -40,90 +40,101 @@ abstract class AndroidxSqliteConcurrencyTest {
     ) = QueryResult.Unit
   }
 
-  private val dbName = "com.eygraber.sqldelight.androidx.driver.test.db"
-
-  private fun setupDatabase(
+  private inline fun withDatabase(
     schema: SqlSchema<QueryResult.Value<Unit>>,
-    onCreate: SqlDriver.() -> Unit,
-    onUpdate: SqlDriver.(Long, Long) -> Unit,
-    onOpen: SqlDriver.() -> Unit,
-    onConfigure: ConfigurableDatabase.() -> Unit = { setJournalMode(SqliteJournalMode.WAL) },
-  ): SqlDriver = AndroidxSqliteDriver(
-    createConnection = androidxSqliteTestCreateConnection(),
-    databaseType = AndroidxSqliteDatabaseType.File(dbName),
-    schema = schema,
-    onConfigure = onConfigure,
-    onCreate = onCreate,
-    onUpdate = onUpdate,
-    onOpen = onOpen,
-  )
+    dbName: String,
+    noinline onCreate: SqlDriver.() -> Unit,
+    noinline onUpdate: SqlDriver.(Long, Long) -> Unit,
+    noinline onOpen: SqlDriver.() -> Unit,
+    noinline onConfigure: ConfigurableDatabase.() -> Unit = { setJournalMode(SqliteJournalMode.WAL) },
+    deleteDbBeforeRun: Boolean = true,
+    deleteDbAfterRun: Boolean = true,
+    test: SqlDriver.() -> Unit,
+  ) {
+    val fullDbName = "${this::class.qualifiedName}.$dbName.db"
 
-  @BeforeTest
-  fun clearNamedDb() {
-    deleteFile(dbName)
-    deleteFile("$dbName-shm")
-    deleteFile("$dbName-wal")
-  }
+    if(deleteDbBeforeRun) {
+      deleteFile(fullDbName)
+      deleteFile("$fullDbName-shm")
+      deleteFile("$fullDbName-wal")
+    }
 
-  @AfterTest
-  fun clearNamedDbPostTests() {
-    clearNamedDb()
+    val result = runCatching {
+      AndroidxSqliteDriver(
+        createConnection = androidxSqliteTestCreateConnection(),
+        databaseType = AndroidxSqliteDatabaseType.File(fullDbName),
+        schema = schema,
+        onConfigure = onConfigure,
+        onCreate = onCreate,
+        onUpdate = onUpdate,
+        onOpen = onOpen,
+      ).test()
+    }
+
+    if(deleteDbAfterRun || result.isFailure) {
+      deleteFile(fullDbName)
+      deleteFile("$fullDbName-shm")
+      deleteFile("$fullDbName-wal")
+    }
+
+    if(result.isFailure) result.getOrThrow()
   }
 
   @Test
   fun `many concurrent transactions are handled in order`() = runTest {
-    val driver = setupDatabase(
+    withDatabase(
       schema = schema,
+      dbName = Random.nextULong().toHexString(),
       onCreate = {},
       onUpdate = { _, _ -> },
       onOpen = {},
-    )
-    val transacter = object : TransacterImpl(driver) {}
+    ) {
+      val transacter = object : TransacterImpl(this) {}
 
-    val jobs = mutableListOf<Job>()
-    repeat(200) { a ->
-      jobs += launch(IoDispatcher) {
-        if(a.mod(2) == 0) {
-          transacter.transaction {
-            val lastId = driver.executeQuery(
-              identifier = null,
-              sql = "SELECT id FROM test ORDER BY id DESC LIMIT 1;",
-              mapper = { cursor ->
-                if(cursor.next().value) {
-                  QueryResult.Value(cursor.getLong(0) ?: -1L)
-                } else {
-                  QueryResult.Value(-1L)
-                }
-              },
-              parameters = 0,
-              binders = null,
-            ).value
-            driver.execute(null, "INSERT INTO test(id) VALUES (${lastId + 1});", 0, null)
+      val jobs = mutableListOf<Job>()
+      repeat(200) { a ->
+        jobs += launch(IoDispatcher) {
+          if(a.mod(2) == 0) {
+            transacter.transaction {
+              val lastId = executeQuery(
+                identifier = null,
+                sql = "SELECT id FROM test ORDER BY id DESC LIMIT 1;",
+                mapper = { cursor ->
+                  if(cursor.next().value) {
+                    QueryResult.Value(cursor.getLong(0) ?: -1L)
+                  } else {
+                    QueryResult.Value(-1L)
+                  }
+                },
+                parameters = 0,
+                binders = null,
+              ).value
+              execute(null, "INSERT INTO test(id) VALUES (${lastId + 1});", 0, null)
+            }
+          } else {
+            execute(null, "UPDATE test SET value = 'test' WHERE id = 0;", 0, null)
           }
         }
-        else {
-          driver.execute(null, "UPDATE test SET value = 'test' WHERE id = 0;", 0, null)
-        }
       }
+
+      jobs.joinAll()
+
+      val lastId = executeQuery(
+        identifier = null,
+        sql = "SELECT id FROM test ORDER BY id DESC LIMIT 1;",
+        mapper = { cursor ->
+          if(cursor.next().value) {
+            QueryResult.Value(cursor.getLong(0) ?: -1L)
+          } else {
+            QueryResult.Value(-1L)
+          }
+        },
+        parameters = 0,
+        binders = null,
+      ).value
+
+      assertEquals(99, lastId)
     }
-
-    jobs.joinAll()
-
-    val lastId = driver.executeQuery(
-      identifier = null,
-      sql = "SELECT id FROM test ORDER BY id DESC LIMIT 1;",
-      mapper = { cursor ->
-        if(cursor.next().value) {
-          QueryResult.Value(cursor.getLong(0) ?: -1L)
-        } else {
-          QueryResult.Value(-1L)
-        }
-      },
-      parameters = 0,
-      binders = null,
-    ).value
-
-    assertEquals(99, lastId)
   }
 
   @Test
@@ -133,25 +144,27 @@ abstract class AndroidxSqliteConcurrencyTest {
     var open = 0
     var configure = 0
 
-    val driver = setupDatabase(
+    withDatabase(
       schema = schema,
+      dbName = Random.nextULong().toHexString(),
       onCreate = { create++ },
       onUpdate = { _, _ -> update++ },
       onOpen = { open++ },
       onConfigure = { configure++ },
-    )
-    val jobs = mutableListOf<Job>()
-    repeat(100) {
-      jobs += launch(IoDispatcher) {
-        driver.execute(null, "PRAGMA journal_mode = WAL;", 0, null)
+    ) {
+      val jobs = mutableListOf<Job>()
+      repeat(100) {
+        jobs += launch(IoDispatcher) {
+          execute(null, "PRAGMA journal_mode = WAL;", 0, null)
+        }
       }
+
+      jobs.joinAll()
+
+      assertEquals(1, create)
+      assertEquals(0, update)
+      assertEquals(1, open)
+      assertEquals(1, configure)
     }
-
-    jobs.joinAll()
-
-    assertEquals(1, create)
-    assertEquals(0, update)
-    assertEquals(1, open)
-    assertEquals(1, configure)
   }
 }

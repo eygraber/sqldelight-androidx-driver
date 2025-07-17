@@ -278,7 +278,7 @@ abstract class AndroidxSqliteDriverTest {
       try {
         bindable.execute()
         throw AssertionError("Expected an IllegalStateException (attempt to re-open an already-closed object)")
-      } catch(ignored: SQLiteException) {
+      } catch(_: SQLiteException) {
       }
     }
   }
