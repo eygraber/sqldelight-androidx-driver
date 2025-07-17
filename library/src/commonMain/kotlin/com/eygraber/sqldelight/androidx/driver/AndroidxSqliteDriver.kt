@@ -53,6 +53,10 @@ public class AndroidxSqliteDriver(
   private val onCreate: AndroidxSqliteDriver.() -> Unit = {},
   private val onUpdate: AndroidxSqliteDriver.(Long, Long) -> Unit = { _, _ -> },
   private val onOpen: AndroidxSqliteDriver.() -> Unit = {},
+  isConnectionPoolProvidedByDriver: Boolean = false,
+  /**
+   * This [ConnectionPool] will be used even if [isConnectionPoolProvidedByDriver] is `true`
+   */
   connectionPool: ConnectionPool? = null,
   vararg migrationCallbacks: AfterVersion,
 ) : SqlDriver {
@@ -76,6 +80,9 @@ public class AndroidxSqliteDriver(
     onCreate: SqlDriver.() -> Unit = {},
     onUpdate: SqlDriver.(Long, Long) -> Unit = { _, _ -> },
     onOpen: SqlDriver.() -> Unit = {},
+    /**
+     * This [ConnectionPool] will be used even if [SQLiteDriver.hasConnectionPool] is `true`
+     */
     connectionPool: ConnectionPool? = null,
     vararg migrationCallbacks: AfterVersion,
   ) : this(
@@ -88,6 +95,7 @@ public class AndroidxSqliteDriver(
     onCreate = onCreate,
     onUpdate = onUpdate,
     onOpen = onOpen,
+    isConnectionPoolProvidedByDriver = driver.hasConnectionPool,
     connectionPool = connectionPool,
     migrationCallbacks = migrationCallbacks,
   )
@@ -117,29 +125,41 @@ public class AndroidxSqliteDriver(
   private val isFirstInteraction = atomic(true)
 
   private val connectionPool by lazy {
-    connectionPool ?: AndroidxDriverConnectionPool(
-      createConnection = createConnection,
-      nameProvider = when(databaseType) {
-        is AndroidxSqliteDatabaseType.File -> databaseType::databaseFilePath
+    val nameProvider = when(databaseType) {
+      is AndroidxSqliteDatabaseType.File -> databaseType::databaseFilePath
 
-        is AndroidxSqliteDatabaseType.FileProvider -> databaseType.databaseFilePathProvider
+      is AndroidxSqliteDatabaseType.FileProvider -> databaseType.databaseFilePathProvider
 
-        AndroidxSqliteDatabaseType.Memory -> {
-          { ":memory:" }
-        }
+      AndroidxSqliteDatabaseType.Memory -> {
+        { ":memory:" }
+      }
 
-        AndroidxSqliteDatabaseType.Temporary -> {
-          { "" }
-        }
-      },
-      isFileBased = when(databaseType) {
-        is AndroidxSqliteDatabaseType.File -> true
-        is AndroidxSqliteDatabaseType.FileProvider -> true
-        AndroidxSqliteDatabaseType.Memory -> false
-        AndroidxSqliteDatabaseType.Temporary -> false
-      },
-      configuration = configuration,
-    )
+      AndroidxSqliteDatabaseType.Temporary -> {
+        { "" }
+      }
+    }
+
+    connectionPool ?: when {
+      isConnectionPoolProvidedByDriver ->
+        PassthroughConnectionPool(
+          createConnection = createConnection,
+          nameProvider = nameProvider,
+          configuration = configuration,
+        )
+
+      else ->
+        AndroidxDriverConnectionPool(
+          createConnection = createConnection,
+          nameProvider = nameProvider,
+          isFileBased = when(databaseType) {
+            is AndroidxSqliteDatabaseType.File -> true
+            is AndroidxSqliteDatabaseType.FileProvider -> true
+            AndroidxSqliteDatabaseType.Memory -> false
+            AndroidxSqliteDatabaseType.Temporary -> false
+          },
+          configuration = configuration,
+        )
+    }
   }
 
   private val transactions = TransactionsThreadLocal()
