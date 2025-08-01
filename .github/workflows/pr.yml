@@ -95,7 +95,7 @@ jobs:
           gradle-version: wrapper
 
       - name: Run tests
-        run: ./gradlew allTests
+        run: ./gradlew allTests --no-configuration-cache
         if: matrix.os == 'ubuntu-latest'
 
       - name: Run Apple tests
