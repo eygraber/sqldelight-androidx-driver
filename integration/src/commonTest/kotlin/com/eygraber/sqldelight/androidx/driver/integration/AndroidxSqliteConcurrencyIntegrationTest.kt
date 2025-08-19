@@ -11,10 +11,12 @@ import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlin.random.Random
+import kotlin.random.nextULong
 import kotlin.test.Test
 
 class AndroidxSqliteConcurrencyIntegrationTest : AndroidxSqliteIntegrationTest() {
-  override var type: AndroidxSqliteDatabaseType = AndroidxSqliteDatabaseType.File("concurrency_integration.db")
+  override var type: AndroidxSqliteDatabaseType =
+    AndroidxSqliteDatabaseType.File("concurrency_integration-${Random.nextULong()}.db")
 
   @Test
   fun concurrentQueriesWithMultipleReadersDoNotShareCachedStatementsAcrossConnections() = runTest {
