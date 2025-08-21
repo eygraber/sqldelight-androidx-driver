@@ -44,5 +44,7 @@ gradleConventionsKmpDefaults {
     KmpTarget.Jvm,
     KmpTarget.Linux,
     KmpTarget.Macos,
+    KmpTarget.Tvos,
+    KmpTarget.Watchos,
   )
 }
