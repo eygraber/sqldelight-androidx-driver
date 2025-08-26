@@ -1,3 +1,5 @@
+import com.android.build.api.dsl.ManagedVirtualDevice
+
 plugins {
   id("com.eygraber.conventions-kotlin-multiplatform")
   id("com.eygraber.conventions-android-library")
@@ -8,6 +10,24 @@ plugins {
 
 android {
   namespace = "com.eygraber.sqldelight.androidx.driver"
+
+  defaultConfig {
+    testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+  }
+
+  testOptions {
+    @Suppress("UnstableApiUsage")
+    managedDevices {
+      localDevices {
+        create("pixel2Api35") {
+          device = "Pixel 2"
+          apiLevel = 35
+          testedAbi = "x86_64"
+          systemImageSource = "aosp-atd"
+        }
+      }
+    }
+  }
 }
 
 kotlin {
@@ -18,6 +38,12 @@ kotlin {
   sourceSets {
     androidMain.dependencies {
       implementation(libs.atomicfu)
+    }
+
+    androidInstrumentedTest.dependencies {
+      implementation(libs.test.junit)
+      implementation(libs.test.androidx.core)
+      implementation(libs.test.androidx.runner)
     }
 
     androidUnitTest.dependencies {

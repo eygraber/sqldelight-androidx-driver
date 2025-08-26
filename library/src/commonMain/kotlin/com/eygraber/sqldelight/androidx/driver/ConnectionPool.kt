@@ -19,10 +19,12 @@ public interface ConnectionPool : AutoCloseable {
 
 internal class AndroidxDriverConnectionPool(
   private val createConnection: (String) -> SQLiteConnection,
-  private val name: String,
+  nameProvider: () -> String,
   private val isFileBased: Boolean,
   private val configuration: AndroidxSqliteConfiguration,
 ) : ConnectionPool {
+  private val name by lazy { nameProvider() }
+
   private val writerConnection: SQLiteConnection by lazy {
     createConnection(name).withConfiguration()
   }
