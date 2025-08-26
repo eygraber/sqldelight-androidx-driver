@@ -76,13 +76,22 @@ public class AndroidxSqliteDriver(
   private val connectionPool by lazy {
     connectionPool ?: AndroidxDriverConnectionPool(
       createConnection = createConnection,
-      name = when(databaseType) {
-        is AndroidxSqliteDatabaseType.File -> databaseType.databaseFilePath
-        AndroidxSqliteDatabaseType.Memory -> ":memory:"
-        AndroidxSqliteDatabaseType.Temporary -> ""
+      nameProvider = when(databaseType) {
+        is AndroidxSqliteDatabaseType.File -> databaseType::databaseFilePath
+
+        is AndroidxSqliteDatabaseType.FileProvider -> databaseType.databaseFilePathProvider
+
+        AndroidxSqliteDatabaseType.Memory -> {
+          { ":memory:" }
+        }
+
+        AndroidxSqliteDatabaseType.Temporary -> {
+          { "" }
+        }
       },
       isFileBased = when(databaseType) {
         is AndroidxSqliteDatabaseType.File -> true
+        is AndroidxSqliteDatabaseType.FileProvider -> true
         AndroidxSqliteDatabaseType.Memory -> false
         AndroidxSqliteDatabaseType.Temporary -> false
       },
