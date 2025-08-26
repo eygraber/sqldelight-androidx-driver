@@ -58,6 +58,7 @@ ktlint = { module = "com.pinterest.ktlint:ktlint-bom", version.ref = "ktlint" }
 okio = { module = "com.squareup.okio:okio", version.ref = "okio" }
 
 test-androidx-core = "androidx.test:core:1.7.0"
+test-androidx-runner = "androidx.test:runner:1.7.0"
 test-junit = { module = "junit:junit", version = "4.13.2" }
 test-kotlin = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin" }
 test-kotlin-junit = { module = "org.jetbrains.kotlin:kotlin-test-junit", version.ref = "kotlin" }
