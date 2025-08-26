@@ -1,8 +1,10 @@
 package com.eygraber.sqldelight.androidx.driver
 
+import android.app.Application
 import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.SQLiteDriver
 import androidx.sqlite.driver.AndroidSQLiteDriver
+import androidx.test.core.app.ApplicationProvider
 import app.cash.sqldelight.Transacter
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -17,6 +19,21 @@ actual class CommonCallbackTest : AndroidxSqliteCallbackTest()
 
 @RunWith(RobolectricTestRunner::class)
 actual class CommonConcurrencyTest : AndroidxSqliteConcurrencyTest()
+
+@RunWith(RobolectricTestRunner::class)
+class AndroidGetDatabasePathConcurrencyTest : AndroidxSqliteConcurrencyTest() {
+  override fun createDatabaseType(fullDbName: String): AndroidxSqliteDatabaseType.FileProvider {
+    val context = ApplicationProvider.getApplicationContext<Application>()
+
+    // https://github.com/robolectric/robolectric/issues/10589
+    context.getDatabasePath(fullDbName).parentFile?.mkdirs()
+
+    return AndroidxSqliteDatabaseType.FileProvider(
+      context = context,
+      name = fullDbName,
+    )
+  }
+}
 
 @RunWith(RobolectricTestRunner::class)
 actual class CommonDriverTest : AndroidxSqliteDriverTest()

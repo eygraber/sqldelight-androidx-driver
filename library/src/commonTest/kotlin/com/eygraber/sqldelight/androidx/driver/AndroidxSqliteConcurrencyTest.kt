@@ -62,13 +62,16 @@ abstract class AndroidxSqliteConcurrencyTest {
     val result = runCatching {
       AndroidxSqliteDriver(
         createConnection = androidxSqliteTestCreateConnection(),
-        databaseType = AndroidxSqliteDatabaseType.File(fullDbName),
+        databaseType = createDatabaseType(fullDbName),
         schema = schema,
         onConfigure = onConfigure,
         onCreate = onCreate,
         onUpdate = onUpdate,
         onOpen = onOpen,
-      ).test()
+      ).apply {
+        test()
+        close()
+      }
     }
 
     if(deleteDbAfterRun || result.isFailure) {
@@ -79,6 +82,9 @@ abstract class AndroidxSqliteConcurrencyTest {
 
     if(result.isFailure) result.getOrThrow()
   }
+
+  protected open fun createDatabaseType(fullDbName: String): AndroidxSqliteDatabaseType =
+    AndroidxSqliteDatabaseType.File(fullDbName)
 
   @Test
   fun `many concurrent transactions are handled in order`() = runTest {
