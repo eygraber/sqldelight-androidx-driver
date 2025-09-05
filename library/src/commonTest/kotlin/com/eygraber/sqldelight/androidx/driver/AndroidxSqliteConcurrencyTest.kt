@@ -6,13 +6,17 @@ import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.db.SqlSchema
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import kotlin.random.Random
 import kotlin.random.nextULong
 import kotlin.test.Test
 import kotlin.test.assertEquals
+
+private const val CONCURRENCY: Int = 500
 
 abstract class AndroidxSqliteConcurrencyTest {
   private val schema = object : SqlSchema<QueryResult.Value<Unit>> {
@@ -20,7 +24,7 @@ abstract class AndroidxSqliteConcurrencyTest {
 
     override fun create(driver: SqlDriver): QueryResult.Value<Unit> {
       driver.execute(
-        0,
+        null,
         """
               |CREATE TABLE test (
               |  id INTEGER PRIMARY KEY NOT NULL,
@@ -40,6 +44,60 @@ abstract class AndroidxSqliteConcurrencyTest {
     ) = QueryResult.Unit
   }
 
+  private val schemaForInitialSynchronization = object : SqlSchema<QueryResult.Value<Unit>> {
+    override var version: Long = 1
+
+    override fun create(driver: SqlDriver): QueryResult.Value<Unit> {
+      driver.execute(
+        null,
+        """
+        |CREATE TABLE test (
+        |  id INTEGER PRIMARY KEY NOT NULL,
+        |  value TEXT DEFAULT NULL
+        |);
+        """.trimMargin(),
+        0,
+      )
+
+      // add an artificial delay to ensure other threads hit the sync point
+      runBlocking {
+        delay(500)
+      }
+
+      driver.execute(
+        null,
+        """
+        |INSERT INTO test(id, value) VALUES (0, 'initial');
+        """.trimMargin(),
+        0,
+      )
+
+      return QueryResult.Unit
+    }
+
+    override fun migrate(
+      driver: SqlDriver,
+      oldVersion: Long,
+      newVersion: Long,
+      vararg callbacks: AfterVersion,
+    ): QueryResult.Value<Unit> {
+      // add an artificial delay to ensure other threads hit the sync point
+      runBlocking {
+        delay(500)
+      }
+
+      driver.execute(
+        null,
+        """
+        |INSERT INTO test(id, value) VALUES (1, 'migrated');
+        """.trimMargin(),
+        0,
+      )
+
+      return QueryResult.Unit
+    }
+  }
+
   private inline fun withDatabase(
     schema: SqlSchema<QueryResult.Value<Unit>>,
     dbName: String,
@@ -49,6 +107,9 @@ abstract class AndroidxSqliteConcurrencyTest {
     noinline onConfigure: AndroidxSqliteConfigurableDriver.() -> Unit = { setJournalMode(SqliteJournalMode.WAL) },
     deleteDbBeforeRun: Boolean = true,
     deleteDbAfterRun: Boolean = true,
+    configuration: AndroidxSqliteConfiguration = AndroidxSqliteConfiguration(
+      readerConnectionsCount = CONCURRENCY - 1,
+    ),
     test: SqlDriver.() -> Unit,
   ) {
     val fullDbName = "${this::class.qualifiedName}.$dbName.db"
@@ -64,6 +125,7 @@ abstract class AndroidxSqliteConcurrencyTest {
         createConnection = androidxSqliteTestCreateConnection(),
         databaseType = createDatabaseType(fullDbName),
         schema = schema,
+        configuration = configuration,
         onConfigure = onConfigure,
         onCreate = onCreate,
         onUpdate = onUpdate,
@@ -98,7 +160,7 @@ abstract class AndroidxSqliteConcurrencyTest {
       val transacter = object : TransacterImpl(this) {}
 
       val jobs = mutableListOf<Job>()
-      repeat(200) { a ->
+      repeat(CONCURRENCY * 2) { a ->
         jobs += launch(IoDispatcher) {
           if(a.mod(2) == 0) {
             transacter.transaction {
@@ -139,7 +201,7 @@ abstract class AndroidxSqliteConcurrencyTest {
         binders = null,
       ).value
 
-      assertEquals(99, lastId)
+      assertEquals(CONCURRENCY - 1L, lastId)
     }
   }
 
@@ -159,7 +221,7 @@ abstract class AndroidxSqliteConcurrencyTest {
       onConfigure = { configure++ },
     ) {
       val jobs = mutableListOf<Job>()
-      repeat(100) {
+      repeat(CONCURRENCY) {
         jobs += launch(IoDispatcher) {
           execute(null, "PRAGMA journal_mode = WAL;", 0, null)
         }
@@ -171,6 +233,86 @@ abstract class AndroidxSqliteConcurrencyTest {
       assertEquals(0, update)
       assertEquals(1, open)
       assertEquals(1, configure)
+    }
+  }
+
+  @Test
+  fun `multiple read connections wait until creation is complete`() = runTest {
+    withDatabase(
+      schema = schemaForInitialSynchronization,
+      dbName = Random.nextULong().toHexString(),
+      onCreate = {},
+      onUpdate = { _, _ -> },
+      onOpen = {},
+      onConfigure = {},
+    ) {
+      List(CONCURRENCY) {
+        launch(IoDispatcher) {
+          val result = executeQuery(
+            identifier = null,
+            sql = "SELECT value FROM test WHERE id = 0",
+            mapper = { cursor ->
+              if(cursor.next().value) {
+                QueryResult.Value(cursor.getString(0))
+              } else {
+                QueryResult.Value(null)
+              }
+            },
+            parameters = 0,
+          )
+
+          assertEquals("initial", result.value)
+        }
+      }.joinAll()
+    }
+  }
+
+  @Test
+  fun `multiple read connections wait until migration is complete`() = runTest {
+    val dbName = Random.nextULong().toHexString()
+
+    withDatabase(
+      schema = schema,
+      dbName = dbName,
+      onCreate = {},
+      onUpdate = { _, _ -> },
+      onOpen = {},
+      onConfigure = {},
+      deleteDbAfterRun = false,
+    ) {
+      launch(IoDispatcher) {
+        execute(null, "PRAGMA user_version;", 0, null)
+      }.join()
+    }
+
+    schemaForInitialSynchronization.version++
+    withDatabase(
+      schema = schemaForInitialSynchronization,
+      dbName = dbName,
+      onCreate = {},
+      onUpdate = { _, _ -> },
+      onOpen = {},
+      onConfigure = {},
+      deleteDbBeforeRun = false,
+    ) {
+      List(CONCURRENCY) {
+        launch(IoDispatcher) {
+          val result = executeQuery(
+            identifier = null,
+            sql = "SELECT value FROM test WHERE id = 1",
+            mapper = { cursor ->
+              if(cursor.next().value) {
+                QueryResult.Value(cursor.getString(0))
+              } else {
+                QueryResult.Value(null)
+              }
+            },
+            parameters = 0,
+          )
+
+          assertEquals("migrated", result.value)
+        }
+      }.joinAll()
     }
   }
 }
