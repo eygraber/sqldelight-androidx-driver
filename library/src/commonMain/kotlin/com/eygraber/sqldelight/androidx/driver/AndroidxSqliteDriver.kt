@@ -90,6 +90,8 @@ public class AndroidxSqliteDriver(
     migrationCallbacks = migrationCallbacks,
   )
 
+  public class ForeignKeyConstraintCheckException(message: String) : Exception(message)
+
   @Suppress("NonBooleanPropertyPrefixedWithIs")
   private val isFirstInteraction = atomic(true)
 
@@ -421,17 +423,19 @@ public class AndroidxSqliteDriver(
             val driver = this
             val transacter = object : TransacterImpl(driver) {}
 
-            transacter.transaction {
-              when(currentVersion) {
-                0L -> schema.create(driver).value
-                else -> schema.migrate(driver, currentVersion, schema.version, *migrationCallbacks).value
+            writerConnection.withDeferredForeignKeyChecks(configuration) {
+              transacter.transaction {
+                when(currentVersion) {
+                  0L -> schema.create(driver).value
+                  else -> schema.migrate(driver, currentVersion, schema.version, *migrationCallbacks).value
+                }
+                skipStatementsCache = configuration.cacheSize == 0
+                when(currentVersion) {
+                  0L -> onCreate()
+                  else -> onUpdate(currentVersion, schema.version)
+                }
+                writerConnection.prepare("PRAGMA user_version = ${schema.version}").use { it.step() }
               }
-              skipStatementsCache = configuration.cacheSize == 0
-              when(currentVersion) {
-                0L -> onCreate()
-                else -> onUpdate(currentVersion, schema.version)
-              }
-              writerConnection.prepare("PRAGMA user_version = ${schema.version}").use { it.step() }
             }
           } else {
             skipStatementsCache = configuration.cacheSize == 0
@@ -440,6 +444,52 @@ public class AndroidxSqliteDriver(
           onOpen()
 
           isFirstInteraction.value = false
+        }
+      }
+    }
+  }
+}
+
+private inline fun SQLiteConnection.withDeferredForeignKeyChecks(
+  configuration: AndroidxSqliteConfiguration,
+  block: () -> Unit,
+) {
+  if(configuration.isForeignKeyConstraintsEnabled) {
+    prepare("PRAGMA foreign_keys = OFF;").use(SQLiteStatement::step)
+  }
+
+  block()
+
+  if(configuration.isForeignKeyConstraintsEnabled) {
+    prepare("PRAGMA foreign_keys = ON;").use(SQLiteStatement::step)
+
+    if(configuration.isForeignKeyConstraintsCheckedAfterCreateOrUpdate) {
+      prepare("PRAGMA foreign_key_check;").use { check ->
+        val violations = mutableListOf<String>()
+        while(check.step()) {
+          val referencingTable = check.getText(0)
+          val referencingRowId = check.getInt(1)
+          val referencedTable = check.getText(2)
+          val referencingConstraintIndex = check.getInt(3)
+
+          violations.add(
+            """
+            |Constraint index: $referencingConstraintIndex 
+            |Referencing table: $referencingTable
+            |Referencing rowId: $referencingRowId
+            |Referenced table: $referencedTable
+            """.trimMargin(),
+          )
+        }
+
+        if(violations.isNotEmpty()) {
+          throw AndroidxSqliteDriver.ForeignKeyConstraintCheckException(
+            """
+            |The following foreign key constraints are violated:
+            |
+            |${violations.joinToString(separator = "\n\n")}
+            """.trimMargin(),
+          )
         }
       }
     }

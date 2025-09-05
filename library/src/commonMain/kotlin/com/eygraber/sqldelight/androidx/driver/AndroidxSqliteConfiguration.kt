@@ -38,6 +38,19 @@ public class AndroidxSqliteConfiguration(
    */
   public val isForeignKeyConstraintsEnabled: Boolean = false,
   /**
+   * When true, a `PRAGMA foreign_key_check` is performed after the schema is created or migrated.
+   *
+   * This is only useful when [isForeignKeyConstraintsEnabled] is true.
+   *
+   * During schema creation and migration, foreign key constraints are temporarily disabled.
+   * This check ensures that after the schema operations are complete, all foreign key constraints are satisfied.
+   * If any violations are found, a [AndroidxSqliteDriver.ForeignKeyConstraintCheckException]
+   * is thrown with details about the violations.
+   *
+   * Default is true.
+   */
+  public val isForeignKeyConstraintsCheckedAfterCreateOrUpdate: Boolean = true,
+  /**
    * Journal mode to use.
    *
    * Default is [SqliteJournalMode.WAL].
@@ -77,6 +90,7 @@ public class AndroidxSqliteConfiguration(
     AndroidxSqliteConfiguration(
       cacheSize = cacheSize,
       isForeignKeyConstraintsEnabled = isForeignKeyConstraintsEnabled,
+      isForeignKeyConstraintsCheckedAfterCreateOrUpdate = isForeignKeyConstraintsCheckedAfterCreateOrUpdate,
       journalMode = journalMode,
       sync = sync,
       readerConnectionsCount = readerConnectionsCount,

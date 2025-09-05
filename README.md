@@ -80,10 +80,29 @@ Database(
 
 It will handle calling the `create` and `migrate` functions on your schema for you, and keep track of the database's version.
 
+## Foreign Key Constraints
+
+When using `AndroidxSqliteDriver`, the handling of foreign key constraints during database creation and migration is 
+managed to ensure data integrity.
+
+If you have foreign key constraints enabled in your
+`AndroidxSqliteConfiguration` (i.e. `isForeignKeyConstraintsEnabled = true`),
+the driver will automatically disable them before executing the schema `create` or `migrate` operations.
+This is done to prevent issues with table creation order and data manipulation during the migration process.
+
+After the creation or migration is complete, foreign key constraints are re-enabled.
+
+Furthermore, to verify the integrity of the foreign key relationships after these operations,
+the driver performs an additional check. If `isForeignKeyConstraintsCheckedAfterCreateOrUpdate`
+is `true` (which it is by default), a `PRAGMA foreign_key_check` is executed. If this check finds
+any violations, an `AndroidxSqliteDriver.ForeignKeyConstraintCheckException` is thrown, detailing the 
+specific constraints that have been violated. This helps catch any inconsistencies in your data that might
+have been introduced during the migration.
+
 ## Connection Pooling
 
-By default, one connection will be used for both reading and writing, and only one thread can acquire that connection at a time.
-If you have WAL enabled, you could (and should) set the amount of pooled reader connections that will be used:
+By default, one connection will be used for both reading and writing, and only one thread can acquire that connection 
+at a time. If you have WAL enabled, you could (and should) set the amount of pooled reader connections that will be used:
 
 ```kotlin
 AndroidxSqliteDriver(
