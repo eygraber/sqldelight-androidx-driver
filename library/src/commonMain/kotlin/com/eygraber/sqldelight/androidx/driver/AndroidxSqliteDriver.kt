@@ -37,7 +37,7 @@ public class AndroidxSqliteDriver(
   private val schema: SqlSchema<QueryResult.Value<Unit>>,
   private val configuration: AndroidxSqliteConfiguration = AndroidxSqliteConfiguration(),
   private val migrateEmptySchema: Boolean = false,
-  private val onConfigure: ConfigurableDatabase.() -> Unit = {},
+  private val onConfigure: AndroidxSqliteConfigurableDriver.() -> Unit = {},
   private val onCreate: AndroidxSqliteDriver.() -> Unit = {},
   private val onUpdate: AndroidxSqliteDriver.(Long, Long) -> Unit = { _, _ -> },
   private val onOpen: AndroidxSqliteDriver.() -> Unit = {},
@@ -50,7 +50,7 @@ public class AndroidxSqliteDriver(
     schema: SqlSchema<QueryResult.Value<Unit>>,
     configuration: AndroidxSqliteConfiguration = AndroidxSqliteConfiguration(),
     migrateEmptySchema: Boolean = false,
-    onConfigure: ConfigurableDatabase.() -> Unit = {},
+    onConfigure: AndroidxSqliteConfigurableDriver.() -> Unit = {},
     onCreate: SqlDriver.() -> Unit = {},
     onUpdate: SqlDriver.(Long, Long) -> Unit = { _, _ -> },
     onOpen: SqlDriver.() -> Unit = {},
@@ -383,7 +383,7 @@ public class AndroidxSqliteDriver(
         if(isFirstInteraction.value && !isNestedUnderCreateOrMigrate) {
           isNestedUnderCreateOrMigrate = true
 
-          ConfigurableDatabase(this).onConfigure()
+          AndroidxSqliteConfigurableDriver(this).onConfigure()
 
           val writerConnection = connectionPool.acquireWriterConnection()
           val currentVersion = try {

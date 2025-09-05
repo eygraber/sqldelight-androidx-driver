@@ -46,7 +46,7 @@ abstract class AndroidxSqliteConcurrencyTest {
     noinline onCreate: SqlDriver.() -> Unit,
     noinline onUpdate: SqlDriver.(Long, Long) -> Unit,
     noinline onOpen: SqlDriver.() -> Unit,
-    noinline onConfigure: ConfigurableDatabase.() -> Unit = { setJournalMode(SqliteJournalMode.WAL) },
+    noinline onConfigure: AndroidxSqliteConfigurableDriver.() -> Unit = { setJournalMode(SqliteJournalMode.WAL) },
     deleteDbBeforeRun: Boolean = true,
     deleteDbAfterRun: Boolean = true,
     test: SqlDriver.() -> Unit,

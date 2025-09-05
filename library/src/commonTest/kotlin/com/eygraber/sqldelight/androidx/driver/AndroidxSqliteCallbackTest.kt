@@ -103,7 +103,7 @@ abstract class AndroidxSqliteCallbackTest {
   private inline fun withDatabase(
     schema: SqlSchema<QueryResult.Value<Unit>>,
     dbName: String,
-    noinline onConfigure: ConfigurableDatabase.() -> Unit,
+    noinline onConfigure: AndroidxSqliteConfigurableDriver.() -> Unit,
     noinline onCreate: SqlDriver.() -> Unit,
     noinline onUpdate: SqlDriver.(Long, Long) -> Unit,
     noinline onOpen: SqlDriver.() -> Unit,

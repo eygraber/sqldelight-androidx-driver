@@ -4,7 +4,7 @@ import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlCursor
 import app.cash.sqldelight.db.SqlPreparedStatement
 
-public class ConfigurableDatabase(
+public class AndroidxSqliteConfigurableDriver(
   private val driver: AndroidxSqliteDriver,
 ) {
   public fun setForeignKeyConstraintsEnabled(isForeignKeyConstraintsEnabled: Boolean) {
