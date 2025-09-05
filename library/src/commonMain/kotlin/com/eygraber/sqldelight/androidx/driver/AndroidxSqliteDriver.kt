@@ -37,6 +37,16 @@ public class AndroidxSqliteDriver(
   private val schema: SqlSchema<QueryResult.Value<Unit>>,
   private val configuration: AndroidxSqliteConfiguration = AndroidxSqliteConfiguration(),
   private val migrateEmptySchema: Boolean = false,
+  /**
+   * A callback to configure the database connection when it's first opened.
+   *
+   * This lambda is invoked on the first interaction with the database, immediately before the schema
+   * is created or migrated. It provides an [AndroidxSqliteConfigurableDriver] as its receiver
+   * to allow for safe configuration of connection properties like journal mode or foreign key
+   * constraints.
+   *
+   * **Warning:** The [AndroidxSqliteConfigurableDriver] receiver is ephemeral and **must not** escape the callback.
+   */
   private val onConfigure: AndroidxSqliteConfigurableDriver.() -> Unit = {},
   private val onCreate: AndroidxSqliteDriver.() -> Unit = {},
   private val onUpdate: AndroidxSqliteDriver.(Long, Long) -> Unit = { _, _ -> },
@@ -50,6 +60,16 @@ public class AndroidxSqliteDriver(
     schema: SqlSchema<QueryResult.Value<Unit>>,
     configuration: AndroidxSqliteConfiguration = AndroidxSqliteConfiguration(),
     migrateEmptySchema: Boolean = false,
+    /**
+     * A callback to configure the database connection when it's first opened.
+     *
+     * This lambda is invoked on the first interaction with the database, immediately before the schema
+     * is created or migrated. It provides an [AndroidxSqliteConfigurableDriver] as its receiver
+     * to allow for safe configuration of connection properties like journal mode or foreign key
+     * constraints.
+     *
+     * **Warning:** The [AndroidxSqliteConfigurableDriver] receiver is ephemeral and **must not** escape the callback.
+     */
     onConfigure: AndroidxSqliteConfigurableDriver.() -> Unit = {},
     onCreate: SqlDriver.() -> Unit = {},
     onUpdate: SqlDriver.(Long, Long) -> Unit = { _, _ -> },
@@ -132,7 +152,7 @@ public class AndroidxSqliteDriver(
   /**
    * True if foreign key constraints are enabled.
    *
-   * This function will block until all connections have been updated.
+   * This function will block until all created connections have been updated.
    *
    * An exception will be thrown if this is called from within a transaction.
    */
@@ -147,7 +167,7 @@ public class AndroidxSqliteDriver(
   /**
    * Journal mode to use.
    *
-   * This function will block until all connections have been updated.
+   * This function will block until all created connections have been updated.
    *
    * An exception will be thrown if this is called from within a transaction.
    */
@@ -162,7 +182,7 @@ public class AndroidxSqliteDriver(
   /**
    * Synchronous mode to use.
    *
-   * This function will block until all connections have been updated.
+   * This function will block until all created connections have been updated.
    *
    * An exception will be thrown if this is called from within a transaction.
    */
