@@ -15,8 +15,10 @@ import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.db.SqlPreparedStatement
 import app.cash.sqldelight.db.SqlSchema
 import kotlinx.atomicfu.atomic
+import kotlinx.atomicfu.locks.ReentrantLock
 import kotlinx.atomicfu.locks.SynchronizedObject
 import kotlinx.atomicfu.locks.synchronized
+import kotlinx.atomicfu.locks.withLock
 
 internal expect class TransactionsThreadLocal() {
   internal fun get(): Transacter.Transaction?
@@ -124,24 +126,27 @@ public class AndroidxSqliteDriver(
   private val transactions = TransactionsThreadLocal()
 
   private val statementsCache = HashMap<SQLiteConnection, LruCache<Int, AndroidxStatement>>()
+  private val statementsCacheLock = ReentrantLock()
 
   private fun getStatementCache(connection: SQLiteConnection) =
-    when {
-      configuration.cacheSize > 0 ->
-        statementsCache.getOrPut(connection) {
-          object : LruCache<Int, AndroidxStatement>(configuration.cacheSize) {
-            override fun entryRemoved(
-              evicted: Boolean,
-              key: Int,
-              oldValue: AndroidxStatement,
-              newValue: AndroidxStatement?,
-            ) {
-              if(evicted) oldValue.close()
+    statementsCacheLock.withLock {
+      when {
+        configuration.cacheSize > 0 ->
+          statementsCache.getOrPut(connection) {
+            object : LruCache<Int, AndroidxStatement>(configuration.cacheSize) {
+              override fun entryRemoved(
+                evicted: Boolean,
+                key: Int,
+                oldValue: AndroidxStatement,
+                newValue: AndroidxStatement?,
+              ) {
+                if(evicted) oldValue.close()
+              }
             }
           }
-        }
 
-      else -> null
+        else -> null
+      }
     }
 
   private var skipStatementsCache = true
