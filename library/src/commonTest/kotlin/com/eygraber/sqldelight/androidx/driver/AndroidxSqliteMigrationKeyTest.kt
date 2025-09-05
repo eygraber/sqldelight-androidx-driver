@@ -117,6 +117,7 @@ abstract class AndroidxSqliteMigrationKeyTest {
     configuration: AndroidxSqliteConfiguration = AndroidxSqliteConfiguration(
       isForeignKeyConstraintsEnabled = true,
     ),
+    migrateEmptySchema: Boolean = false,
     test: SqlDriver.() -> Unit,
   ) {
     val fullDbName = "${this::class.qualifiedName}.$dbName.db"
@@ -137,6 +138,7 @@ abstract class AndroidxSqliteMigrationKeyTest {
         onCreate = onCreate,
         onUpdate = onUpdate,
         onOpen = onOpen,
+        migrateEmptySchema = migrateEmptySchema,
       ).apply {
         test()
         close()
@@ -314,5 +316,77 @@ abstract class AndroidxSqliteMigrationKeyTest {
     ) {
       execute(null, "PRAGMA user_version;", 0, null)
     }
+  }
+
+  @Test
+  fun `create is run if migrateEmptySchema is false`() {
+    val schema = object : SqlSchema<QueryResult.Value<Unit>> {
+      override var version: Long = 1
+
+      override fun create(driver: SqlDriver) = QueryResult.Unit
+
+      override fun migrate(
+        driver: SqlDriver,
+        oldVersion: Long,
+        newVersion: Long,
+        vararg callbacks: AfterVersion,
+      ) = QueryResult.Unit
+    }
+
+    val dbName = Random.nextULong().toHexString()
+
+    var create = 0
+    var update = 0
+
+    withDatabase(
+      schema = schema,
+      dbName = dbName,
+      onCreate = { create++ },
+      onUpdate = { _, _ -> update++ },
+      onOpen = {},
+      onConfigure = {},
+      migrateEmptySchema = false,
+    ) {
+      execute(null, "PRAGMA user_version;", 0, null)
+    }
+
+    assertEquals(1, create)
+    assertEquals(0, update)
+  }
+
+  @Test
+  fun `create is not run if migrateEmptySchema is true`() {
+    val schema = object : SqlSchema<QueryResult.Value<Unit>> {
+      override var version: Long = 1
+
+      override fun create(driver: SqlDriver) = QueryResult.Unit
+
+      override fun migrate(
+        driver: SqlDriver,
+        oldVersion: Long,
+        newVersion: Long,
+        vararg callbacks: AfterVersion,
+      ) = QueryResult.Unit
+    }
+
+    val dbName = Random.nextULong().toHexString()
+
+    var create = 0
+    var update = 0
+
+    withDatabase(
+      schema = schema,
+      dbName = dbName,
+      onCreate = { create++ },
+      onUpdate = { _, _ -> update++ },
+      onOpen = {},
+      onConfigure = {},
+      migrateEmptySchema = true,
+    ) {
+      execute(null, "PRAGMA user_version;", 0, null)
+    }
+
+    assertEquals(0, create)
+    assertEquals(1, update)
   }
 }

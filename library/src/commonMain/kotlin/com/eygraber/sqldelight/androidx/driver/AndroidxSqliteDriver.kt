@@ -424,19 +424,20 @@ public class AndroidxSqliteDriver(
             connectionPool.releaseWriterConnection()
           }
 
-          if(currentVersion == 0L && !migrateEmptySchema || currentVersion < schema.version) {
+          val isCreate = currentVersion == 0L && !migrateEmptySchema
+          if(isCreate || currentVersion < schema.version) {
             val driver = this
             val transacter = object : TransacterImpl(driver) {}
 
             writerConnection.withDeferredForeignKeyChecks(configuration) {
               transacter.transaction {
-                when(currentVersion) {
-                  0L -> schema.create(driver).value
+                when {
+                  isCreate -> schema.create(driver).value
                   else -> schema.migrate(driver, currentVersion, schema.version, *migrationCallbacks).value
                 }
                 skipStatementsCache = configuration.cacheSize == 0
-                when(currentVersion) {
-                  0L -> onCreate()
+                when {
+                  isCreate -> onCreate()
                   else -> onUpdate(currentVersion, schema.version)
                 }
                 writerConnection.prepare("PRAGMA user_version = ${schema.version}").use { it.step() }
