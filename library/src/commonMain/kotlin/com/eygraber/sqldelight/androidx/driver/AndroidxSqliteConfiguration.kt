@@ -8,6 +8,7 @@ public enum class SqliteJournalMode(internal val value: String) {
   Truncate("TRUNCATE"),
   Persist("PERSIST"),
   Memory("MEMORY"),
+
   @Suppress("EnumNaming")
   WAL("WAL"),
   Off("OFF"),
@@ -35,19 +36,19 @@ public class AndroidxSqliteConfiguration(
    *
    * Default is false.
    */
-  public var isForeignKeyConstraintsEnabled: Boolean = false,
+  public val isForeignKeyConstraintsEnabled: Boolean = false,
   /**
    * Journal mode to use.
    *
    * Default is [SqliteJournalMode.WAL].
    */
-  public var journalMode: SqliteJournalMode = SqliteJournalMode.WAL,
+  public val journalMode: SqliteJournalMode = SqliteJournalMode.WAL,
   /**
    * Synchronous mode to use.
    *
    * Default is [SqliteSync.Full] unless [journalMode] is set to [SqliteJournalMode.WAL] in which case it is [SqliteSync.Normal].
    */
-  public var sync: SqliteSync = when(journalMode) {
+  public val sync: SqliteSync = when(journalMode) {
     SqliteJournalMode.WAL -> SqliteSync.Normal
     SqliteJournalMode.Delete,
     SqliteJournalMode.Truncate,
@@ -67,4 +68,17 @@ public class AndroidxSqliteConfiguration(
     SqliteJournalMode.WAL -> 4
     else -> 0
   },
-)
+) {
+  public fun copy(
+    isForeignKeyConstraintsEnabled: Boolean = this.isForeignKeyConstraintsEnabled,
+    journalMode: SqliteJournalMode = this.journalMode,
+    sync: SqliteSync = this.sync,
+  ): AndroidxSqliteConfiguration =
+    AndroidxSqliteConfiguration(
+      cacheSize = cacheSize,
+      isForeignKeyConstraintsEnabled = isForeignKeyConstraintsEnabled,
+      journalMode = journalMode,
+      sync = sync,
+      readerConnectionsCount = readerConnectionsCount,
+    )
+}
