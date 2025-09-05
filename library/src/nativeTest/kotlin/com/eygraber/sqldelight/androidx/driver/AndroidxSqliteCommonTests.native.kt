@@ -19,9 +19,10 @@ actual class CommonCallbackTest : AndroidxSqliteCallbackTest()
 actual class CommonConcurrencyTest : AndroidxSqliteConcurrencyTest()
 actual class CommonDriverTest : AndroidxSqliteDriverTest()
 actual class CommonDriverOpenFlagsTest : AndroidxSqliteDriverOpenFlagsTest()
+actual class CommonEphemeralTest : AndroidxSqliteEphemeralTest()
+actual class CommonMigrationKeyTest : AndroidxSqliteMigrationKeyTest()
 actual class CommonQueryTest : AndroidxSqliteQueryTest()
 actual class CommonTransacterTest : AndroidxSqliteTransacterTest()
-actual class CommonEphemeralTest : AndroidxSqliteEphemeralTest()
 
 actual fun androidxSqliteTestDriver(): SQLiteDriver = BundledSQLiteDriver()
 

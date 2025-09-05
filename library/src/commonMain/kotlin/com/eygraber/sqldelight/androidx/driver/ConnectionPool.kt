@@ -2,6 +2,7 @@ package com.eygraber.sqldelight.androidx.driver
 
 import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.SQLiteStatement
+import kotlinx.atomicfu.atomic
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
@@ -21,8 +22,15 @@ internal class AndroidxDriverConnectionPool(
   private val createConnection: (String) -> SQLiteConnection,
   nameProvider: () -> String,
   private val isFileBased: Boolean,
-  private val configuration: AndroidxSqliteConfiguration,
+  configuration: AndroidxSqliteConfiguration,
 ) : ConnectionPool {
+  private data class ReaderSQLiteConnection(
+    val isCreated: Boolean,
+    val connection: Lazy<SQLiteConnection>,
+  )
+
+  private var configuration by atomic(configuration)
+
   private val name by lazy { nameProvider() }
 
   private val writerConnection: SQLiteConnection by lazy {
@@ -35,14 +43,17 @@ internal class AndroidxDriverConnectionPool(
     else -> 0
   }
 
-  private val readerChannel = Channel<Lazy<SQLiteConnection>>(capacity = maxReaderConnectionsCount)
+  private val readerChannel = Channel<ReaderSQLiteConnection>(capacity = maxReaderConnectionsCount)
 
   init {
     repeat(maxReaderConnectionsCount) {
       readerChannel.trySend(
-        lazy {
-          createConnection(name).withConfiguration()
-        },
+        ReaderSQLiteConnection(
+          isCreated = false,
+          lazy {
+            createConnection(name).withConfiguration()
+          },
+        ),
       )
     }
   }
@@ -70,7 +81,7 @@ internal class AndroidxDriverConnectionPool(
   override fun acquireReaderConnection() = when(maxReaderConnectionsCount) {
     0 -> acquireWriterConnection()
     else -> runBlocking {
-      readerChannel.receive().value
+      readerChannel.receive().connection.value
     }
   }
 
@@ -82,24 +93,38 @@ internal class AndroidxDriverConnectionPool(
     when(maxReaderConnectionsCount) {
       0 -> releaseWriterConnection()
       else -> runBlocking {
-        readerChannel.send(lazy { connection })
+        readerChannel.send(
+          ReaderSQLiteConnection(
+            isCreated = true,
+            lazy { connection },
+          ),
+        )
       }
     }
   }
 
   override fun setForeignKeyConstraintsEnabled(isForeignKeyConstraintsEnabled: Boolean) {
-    configuration.isForeignKeyConstraintsEnabled = isForeignKeyConstraintsEnabled
+    configuration = configuration.copy(
+      isForeignKeyConstraintsEnabled = isForeignKeyConstraintsEnabled,
+    )
+
     val foreignKeys = if(isForeignKeyConstraintsEnabled) "ON" else "OFF"
     runPragmaOnAllConnections("PRAGMA foreign_keys = $foreignKeys;")
   }
 
   override fun setJournalMode(journalMode: SqliteJournalMode) {
-    configuration.journalMode = journalMode
+    configuration = configuration.copy(
+      journalMode = journalMode,
+    )
+
     runPragmaOnAllConnections("PRAGMA journal_mode = ${configuration.journalMode.value};")
   }
 
   override fun setSync(sync: SqliteSync) {
-    configuration.sync = sync
+    configuration = configuration.copy(
+      sync = sync,
+    )
+
     runPragmaOnAllConnections("PRAGMA synchronous = ${configuration.sync.value};")
   }
 
@@ -116,9 +141,12 @@ internal class AndroidxDriverConnectionPool(
         repeat(maxReaderConnectionsCount) {
           val reader = readerChannel.receive()
           try {
-            reader.value.writePragma(sql)
+            // only apply the pragma to connections that were already created
+            if(reader.isCreated) {
+              reader.connection.value.writePragma(sql)
+            }
           } finally {
-            releaseReaderConnection(reader.value)
+            readerChannel.send(reader)
           }
         }
       }
@@ -126,10 +154,12 @@ internal class AndroidxDriverConnectionPool(
   }
 
   private fun SQLiteConnection.withConfiguration(): SQLiteConnection = this.apply {
-    val foreignKeys = if(configuration.isForeignKeyConstraintsEnabled) "ON" else "OFF"
-    writePragma("PRAGMA foreign_keys = $foreignKeys;")
-    writePragma("PRAGMA journal_mode = ${configuration.journalMode.value};")
-    writePragma("PRAGMA synchronous = ${configuration.sync.value};")
+    configuration.copy().apply {
+      val foreignKeys = if(isForeignKeyConstraintsEnabled) "ON" else "OFF"
+      writePragma("PRAGMA foreign_keys = $foreignKeys;")
+      writePragma("PRAGMA journal_mode = ${journalMode.value};")
+      writePragma("PRAGMA synchronous = ${sync.value};")
+    }
   }
 
   /**
@@ -142,7 +172,7 @@ internal class AndroidxDriverConnectionPool(
       }
       repeat(maxReaderConnectionsCount) {
         val reader = readerChannel.receive()
-        if(reader.isInitialized()) reader.value.close()
+        if(reader.isCreated) reader.connection.value.close()
       }
       readerChannel.close()
     }
