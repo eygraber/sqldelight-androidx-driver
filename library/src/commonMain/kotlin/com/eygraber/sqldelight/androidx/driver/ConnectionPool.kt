@@ -24,6 +24,11 @@ internal class AndroidxDriverConnectionPool(
   private val isFileBased: Boolean,
   configuration: AndroidxSqliteConfiguration,
 ) : ConnectionPool {
+  private data class ReaderSQLiteConnection(
+    val isCreated: Boolean,
+    val connection: Lazy<SQLiteConnection>,
+  )
+
   private var configuration by atomic(configuration)
 
   private val name by lazy { nameProvider() }
@@ -38,14 +43,17 @@ internal class AndroidxDriverConnectionPool(
     else -> 0
   }
 
-  private val readerChannel = Channel<Lazy<SQLiteConnection>>(capacity = maxReaderConnectionsCount)
+  private val readerChannel = Channel<ReaderSQLiteConnection>(capacity = maxReaderConnectionsCount)
 
   init {
     repeat(maxReaderConnectionsCount) {
       readerChannel.trySend(
-        lazy {
-          createConnection(name).withConfiguration()
-        },
+        ReaderSQLiteConnection(
+          isCreated = false,
+          lazy {
+            createConnection(name).withConfiguration()
+          },
+        ),
       )
     }
   }
@@ -73,7 +81,7 @@ internal class AndroidxDriverConnectionPool(
   override fun acquireReaderConnection() = when(maxReaderConnectionsCount) {
     0 -> acquireWriterConnection()
     else -> runBlocking {
-      readerChannel.receive().value
+      readerChannel.receive().connection.value
     }
   }
 
@@ -85,7 +93,12 @@ internal class AndroidxDriverConnectionPool(
     when(maxReaderConnectionsCount) {
       0 -> releaseWriterConnection()
       else -> runBlocking {
-        readerChannel.send(lazy { connection })
+        readerChannel.send(
+          ReaderSQLiteConnection(
+            isCreated = true,
+            lazy { connection },
+          ),
+        )
       }
     }
   }
@@ -128,9 +141,12 @@ internal class AndroidxDriverConnectionPool(
         repeat(maxReaderConnectionsCount) {
           val reader = readerChannel.receive()
           try {
-            reader.value.writePragma(sql)
+            // only apply the pragma to connections that were already created
+            if(reader.isCreated) {
+              reader.connection.value.writePragma(sql)
+            }
           } finally {
-            releaseReaderConnection(reader.value)
+            readerChannel.send(reader)
           }
         }
       }
@@ -156,7 +172,7 @@ internal class AndroidxDriverConnectionPool(
       }
       repeat(maxReaderConnectionsCount) {
         val reader = readerChannel.receive()
-        if(reader.isInitialized()) reader.value.close()
+        if(reader.isCreated) reader.connection.value.close()
       }
       readerChannel.close()
     }
