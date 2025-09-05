@@ -271,6 +271,7 @@ abstract class AndroidxSqliteConcurrencyTest {
   fun `multiple read connections wait until migration is complete`() = runTest {
     val dbName = Random.nextULong().toHexString()
 
+    // trigger creation
     withDatabase(
       schema = schema,
       dbName = dbName,

@@ -42,13 +42,16 @@ actual class CommonDriverTest : AndroidxSqliteDriverTest()
 actual class CommonDriverOpenFlagsTest : AndroidxSqliteDriverOpenFlagsTest()
 
 @RunWith(RobolectricTestRunner::class)
+actual class CommonEphemeralTest : AndroidxSqliteEphemeralTest()
+
+@RunWith(RobolectricTestRunner::class)
+actual class CommonMigrationKeyTest : AndroidxSqliteMigrationKeyTest()
+
+@RunWith(RobolectricTestRunner::class)
 actual class CommonQueryTest : AndroidxSqliteQueryTest()
 
 @RunWith(RobolectricTestRunner::class)
 actual class CommonTransacterTest : AndroidxSqliteTransacterTest()
-
-@RunWith(RobolectricTestRunner::class)
-actual class CommonEphemeralTest : AndroidxSqliteEphemeralTest()
 
 actual fun androidxSqliteTestDriver(): SQLiteDriver = AndroidSQLiteDriver()
 
