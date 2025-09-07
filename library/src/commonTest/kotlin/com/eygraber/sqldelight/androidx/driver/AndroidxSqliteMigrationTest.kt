@@ -7,10 +7,11 @@ import app.cash.sqldelight.db.SqlSchema
 import kotlin.random.Random
 import kotlin.random.nextULong
 import kotlin.test.Test
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 
-abstract class AndroidxSqliteMigrationKeyTest {
+abstract class AndroidxSqliteMigrationTest {
   private fun getSchema(
     additionalMigrationSteps: SqlDriver.() -> Unit = {},
   ) = object : SqlSchema<QueryResult.Value<Unit>> {
@@ -217,6 +218,11 @@ abstract class AndroidxSqliteMigrationKeyTest {
 
   @Test
   fun `foreign key constraint violations during migrations fail after the migration`() {
+    val configuration = AndroidxSqliteConfiguration(
+      isForeignKeyConstraintsEnabled = true,
+      isForeignKeyConstraintsCheckedAfterCreateOrUpdate = true,
+    )
+
     val schema = getSchema {
       execute(
         null,
@@ -237,27 +243,14 @@ abstract class AndroidxSqliteMigrationKeyTest {
       onOpen = {},
       onConfigure = {},
       deleteDbAfterRun = false,
+      configuration = configuration,
     ) {
       execute(null, "PRAGMA user_version;", 0, null)
     }
 
     schema.version++
 
-    assertFailsWith<AndroidxSqliteDriver.ForeignKeyConstraintCheckException>(
-      message = """
-        |The following foreign key constraints are violated:
-        |
-        |Constraint index: 0 
-        |Referencing table: post
-        |Referencing rowId: 1
-        |Referenced table: user
-        |
-        |Constraint index: 0 
-        |Referencing table: post
-        |Referencing rowId: 2
-        |Referenced table: user
-      """.trimMargin(),
-    ) {
+    val exception = assertFailsWith<AndroidxSqliteDriver.ForeignKeyConstraintCheckException> {
       withDatabase(
         schema = schema,
         dbName = dbName,
@@ -266,10 +259,224 @@ abstract class AndroidxSqliteMigrationKeyTest {
         onOpen = {},
         onConfigure = {},
         deleteDbBeforeRun = false,
+        configuration = configuration,
       ) {
         execute(null, "PRAGMA user_version;", 0, null)
       }
     }
+
+    assertEquals(
+      expected = exception.message,
+      actual = """
+        |The following foreign key constraints are violated:
+        |
+        |ForeignKeyConstraintViolation:
+        |  Constraint index: 0
+        |  Referencing table: post
+        |  Referencing rowId: 1
+        |  Referenced table: user
+        |
+        |ForeignKeyConstraintViolation:
+        |  Constraint index: 0
+        |  Referencing table: post
+        |  Referencing rowId: 2
+        |  Referenced table: user
+      """.trimMargin(),
+    )
+
+    assertContentEquals(
+      expected = listOf(
+        AndroidxSqliteDriver.ForeignKeyConstraintViolation(
+          referencingTable = "post",
+          referencingRowId = 1,
+          referencedTable = "user",
+          referencingConstraintIndex = 0,
+        ),
+        AndroidxSqliteDriver.ForeignKeyConstraintViolation(
+          referencingTable = "post",
+          referencingRowId = 2,
+          referencedTable = "user",
+          referencingConstraintIndex = 0,
+        ),
+      ),
+      actual = exception.violations,
+    )
+  }
+
+  @Test
+  fun `foreign key constraint violations during migrations respects the default max amount of reported violations`() {
+    val configuration = AndroidxSqliteConfiguration(
+      isForeignKeyConstraintsEnabled = true,
+      isForeignKeyConstraintsCheckedAfterCreateOrUpdate = true,
+    )
+
+    val schema = getSchema {
+      execute(
+        null,
+        """
+        |DELETE FROM user WHERE id = 1;
+        """.trimMargin(),
+        0,
+      )
+    }
+    val dbName = Random.nextULong().toHexString()
+
+    // trigger creation
+    withDatabase(
+      schema = schema,
+      dbName = dbName,
+      onCreate = {},
+      onUpdate = { _, _ -> },
+      onOpen = {},
+      onConfigure = {},
+      deleteDbAfterRun = false,
+      configuration = configuration,
+    ) {
+      val insertedValues = buildString {
+        repeat(configuration.maxMigrationForeignKeyConstraintViolationsToReport + 1) {
+          append("($it, 1),")
+        }
+      }.removeSuffix(",")
+
+      // remove the values inserted previously in the schema creation for a cleaner test
+      execute(
+        null,
+        "DELETE FROM post",
+        0,
+      )
+
+      execute(
+        null,
+        "INSERT INTO post VALUES $insertedValues",
+        0,
+      )
+    }
+
+    schema.version++
+
+    val messageViolations = List(5) { id ->
+      """
+      |ForeignKeyConstraintViolation:
+      |  Constraint index: 0
+      |  Referencing table: post
+      |  Referencing rowId: $id
+      |  Referenced table: user
+      """.trimMargin()
+    }.joinToString(separator = "\n\n")
+
+    val exception = assertFailsWith<AndroidxSqliteDriver.ForeignKeyConstraintCheckException> {
+      withDatabase(
+        schema = schema,
+        dbName = dbName,
+        onCreate = {},
+        onUpdate = { _, _ -> },
+        onOpen = {},
+        onConfigure = {},
+        deleteDbBeforeRun = false,
+        configuration = configuration,
+      ) {
+        execute(null, "PRAGMA user_version;", 0, null)
+      }
+    }
+
+    val expectedNotShown = configuration.maxMigrationForeignKeyConstraintViolationsToReport - 5
+
+    assertEquals(
+      expected = exception.message,
+      actual = """
+               |The following foreign key constraints are violated ($expectedNotShown not shown):
+               |
+               |$messageViolations
+      """.trimMargin(),
+    )
+
+    assertContentEquals(
+      expected = List(configuration.maxMigrationForeignKeyConstraintViolationsToReport) { id ->
+        AndroidxSqliteDriver.ForeignKeyConstraintViolation(
+          referencingTable = "post",
+          referencingRowId = id,
+          referencedTable = "user",
+          referencingConstraintIndex = 0,
+        )
+      },
+      actual = exception.violations,
+    )
+  }
+
+  @Test
+  fun `foreign key constraint violations during migrations respects the max amount of reported violations`() {
+    val configuration = AndroidxSqliteConfiguration(
+      isForeignKeyConstraintsEnabled = true,
+      isForeignKeyConstraintsCheckedAfterCreateOrUpdate = true,
+      maxMigrationForeignKeyConstraintViolationsToReport = 1,
+    )
+
+    val schema = getSchema {
+      execute(
+        null,
+        """
+        |DELETE FROM user WHERE id = 1;
+        """.trimMargin(),
+        0,
+      )
+    }
+    val dbName = Random.nextULong().toHexString()
+
+    // trigger creation
+    withDatabase(
+      schema = schema,
+      dbName = dbName,
+      onCreate = {},
+      onUpdate = { _, _ -> },
+      onOpen = {},
+      onConfigure = {},
+      deleteDbAfterRun = false,
+      configuration = configuration,
+    ) {
+      execute(null, "PRAGMA user_version;", 0, null)
+    }
+
+    schema.version++
+
+    val exception = assertFailsWith<AndroidxSqliteDriver.ForeignKeyConstraintCheckException> {
+      withDatabase(
+        schema = schema,
+        dbName = dbName,
+        onCreate = {},
+        onUpdate = { _, _ -> },
+        onOpen = {},
+        onConfigure = {},
+        deleteDbBeforeRun = false,
+        configuration = configuration,
+      ) {
+        execute(null, "PRAGMA user_version;", 0, null)
+      }
+    }
+
+    assertEquals(
+      expected = exception.message,
+      actual = """
+        |The following foreign key constraints are violated:
+        |
+        |ForeignKeyConstraintViolation:
+        |  Constraint index: 0
+        |  Referencing table: post
+        |  Referencing rowId: 1
+        |  Referenced table: user
+      """.trimMargin(),
+    )
+
+    assertContentEquals(
+      expected = listOf(
+        AndroidxSqliteDriver.ForeignKeyConstraintViolation(
+          referencingTable = "post",
+          referencingRowId = 1,
+          referencedTable = "user",
+          referencingConstraintIndex = 0,
+        ),
+      ),
+      actual = exception.violations,
+    )
   }
 
   @Test

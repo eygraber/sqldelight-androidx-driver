@@ -99,6 +99,12 @@ any violations, an `AndroidxSqliteDriver.ForeignKeyConstraintCheckException` is 
 specific constraints that have been violated. This helps catch any inconsistencies in your data that might
 have been introduced during the migration.
 
+> [!IMPORTANT]  
+> By default, the first 100 violations will be parsed out of the result set of 
+> `PRAGMA foreign_key_check` and stored in the `AndroidxSqliteDriver.ForeignKeyConstraintCheckException`.
+> If your use can result in a large number of violations you can adjust the max amount that will be processed via 
+> `AndroidxSqliteConfiguration.maxMigrationForeignKeyConstraintViolationsToReport`.
+
 ## Connection Pooling
 
 By default, one connection will be used for both reading and writing, and only one thread can acquire that connection 

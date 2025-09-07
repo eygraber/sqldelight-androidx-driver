@@ -7,10 +7,11 @@ import kotlinx.coroutines.CoroutineDispatcher
 
 expect class CommonCallbackTest() : AndroidxSqliteCallbackTest
 expect class CommonConcurrencyTest() : AndroidxSqliteConcurrencyTest
+expect class CommonCreationTest() : AndroidxSqliteCreationTest
 expect class CommonDriverTest() : AndroidxSqliteDriverTest
 expect class CommonDriverOpenFlagsTest() : AndroidxSqliteDriverOpenFlagsTest
 expect class CommonEphemeralTest() : AndroidxSqliteEphemeralTest
-expect class CommonMigrationKeyTest() : AndroidxSqliteMigrationKeyTest
+expect class CommonMigrationTest() : AndroidxSqliteMigrationTest
 expect class CommonQueryTest() : AndroidxSqliteQueryTest
 expect class CommonTransacterTest() : AndroidxSqliteTransacterTest
 
