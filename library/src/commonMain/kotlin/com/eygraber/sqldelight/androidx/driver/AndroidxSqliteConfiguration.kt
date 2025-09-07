@@ -81,6 +81,13 @@ public class AndroidxSqliteConfiguration(
     SqliteJournalMode.WAL -> 4
     else -> 0
   },
+  /**
+   * The maximum number of foreign key constraint violations to report when
+   * [isForeignKeyConstraintsCheckedAfterCreateOrUpdate] is `true` and `PRAGMA foreign_key_check` fails.
+   *
+   * Defaults to 100.
+   */
+  public val maxMigrationForeignKeyConstraintViolationsToReport: Int = 100,
 ) {
   public fun copy(
     isForeignKeyConstraintsEnabled: Boolean = this.isForeignKeyConstraintsEnabled,
@@ -94,5 +101,6 @@ public class AndroidxSqliteConfiguration(
       journalMode = journalMode,
       sync = sync,
       readerConnectionsCount = readerConnectionsCount,
+      maxMigrationForeignKeyConstraintViolationsToReport = maxMigrationForeignKeyConstraintViolationsToReport,
     )
 }

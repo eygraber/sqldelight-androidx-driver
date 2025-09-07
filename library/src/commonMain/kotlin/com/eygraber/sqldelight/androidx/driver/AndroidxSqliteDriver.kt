@@ -92,7 +92,26 @@ public class AndroidxSqliteDriver(
     migrationCallbacks = migrationCallbacks,
   )
 
-  public class ForeignKeyConstraintCheckException(message: String) : Exception(message)
+  public data class ForeignKeyConstraintViolation(
+    val referencingTable: String,
+    val referencingRowId: Int,
+    val referencedTable: String,
+    val referencingConstraintIndex: Int,
+  ) {
+    override fun toString(): String =
+      """
+      |ForeignKeyConstraintViolation:
+      |  Constraint index: $referencingConstraintIndex
+      |  Referencing table: $referencingTable
+      |  Referencing rowId: $referencingRowId
+      |  Referenced table: $referencedTable
+      """.trimMargin()
+  }
+
+  public class ForeignKeyConstraintCheckException(
+    public val violations: List<ForeignKeyConstraintViolation>,
+    message: String,
+  ) : Exception(message)
 
   @Suppress("NonBooleanPropertyPrefixedWithIs")
   private val isFirstInteraction = atomic(true)
@@ -471,29 +490,29 @@ private inline fun SQLiteConnection.withDeferredForeignKeyChecks(
 
     if(configuration.isForeignKeyConstraintsCheckedAfterCreateOrUpdate) {
       prepare("PRAGMA foreign_key_check;").use { check ->
-        val violations = mutableListOf<String>()
-        while(check.step()) {
-          val referencingTable = check.getText(0)
-          val referencingRowId = check.getInt(1)
-          val referencedTable = check.getText(2)
-          val referencingConstraintIndex = check.getInt(3)
-
+        val violations = mutableListOf<AndroidxSqliteDriver.ForeignKeyConstraintViolation>()
+        var count = 0
+        while(check.step() && count++ < configuration.maxMigrationForeignKeyConstraintViolationsToReport) {
           violations.add(
-            """
-            |Constraint index: $referencingConstraintIndex 
-            |Referencing table: $referencingTable
-            |Referencing rowId: $referencingRowId
-            |Referenced table: $referencedTable
-            """.trimMargin(),
+            AndroidxSqliteDriver.ForeignKeyConstraintViolation(
+              referencingTable = check.getText(0),
+              referencingRowId = check.getInt(1),
+              referencedTable = check.getText(2),
+              referencingConstraintIndex = check.getInt(3),
+            ),
           )
         }
 
         if(violations.isNotEmpty()) {
+          val unprintedViolationsCount = violations.size - 5
+          val unprintedDisclaimer = if(unprintedViolationsCount > 0) " ($unprintedViolationsCount not shown)" else ""
+
           throw AndroidxSqliteDriver.ForeignKeyConstraintCheckException(
-            """
-            |The following foreign key constraints are violated:
+            violations = violations,
+            message = """
+            |The following foreign key constraints are violated$unprintedDisclaimer:
             |
-            |${violations.joinToString(separator = "\n\n")}
+            |${violations.take(5).joinToString(separator = "\n\n")}
             """.trimMargin(),
           )
         }

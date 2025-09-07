@@ -21,6 +21,9 @@ actual class CommonCallbackTest : AndroidxSqliteCallbackTest()
 actual class CommonConcurrencyTest : AndroidxSqliteConcurrencyTest()
 
 @RunWith(RobolectricTestRunner::class)
+actual class CommonCreationTest : AndroidxSqliteCreationTest()
+
+@RunWith(RobolectricTestRunner::class)
 class AndroidGetDatabasePathConcurrencyTest : AndroidxSqliteConcurrencyTest() {
   override fun createDatabaseType(fullDbName: String): AndroidxSqliteDatabaseType.FileProvider {
     val context = ApplicationProvider.getApplicationContext<Application>()
@@ -45,7 +48,7 @@ actual class CommonDriverOpenFlagsTest : AndroidxSqliteDriverOpenFlagsTest()
 actual class CommonEphemeralTest : AndroidxSqliteEphemeralTest()
 
 @RunWith(RobolectricTestRunner::class)
-actual class CommonMigrationKeyTest : AndroidxSqliteMigrationKeyTest()
+actual class CommonMigrationTest : AndroidxSqliteMigrationTest()
 
 @RunWith(RobolectricTestRunner::class)
 actual class CommonQueryTest : AndroidxSqliteQueryTest()

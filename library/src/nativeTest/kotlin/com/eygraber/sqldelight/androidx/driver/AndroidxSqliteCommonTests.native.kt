@@ -17,10 +17,11 @@ import kotlin.test.assertFailsWith
 
 actual class CommonCallbackTest : AndroidxSqliteCallbackTest()
 actual class CommonConcurrencyTest : AndroidxSqliteConcurrencyTest()
+actual class CommonCreationTest : AndroidxSqliteCreationTest()
 actual class CommonDriverTest : AndroidxSqliteDriverTest()
 actual class CommonDriverOpenFlagsTest : AndroidxSqliteDriverOpenFlagsTest()
 actual class CommonEphemeralTest : AndroidxSqliteEphemeralTest()
-actual class CommonMigrationKeyTest : AndroidxSqliteMigrationKeyTest()
+actual class CommonMigrationTest : AndroidxSqliteMigrationTest()
 actual class CommonQueryTest : AndroidxSqliteQueryTest()
 actual class CommonTransacterTest : AndroidxSqliteTransacterTest()
 
