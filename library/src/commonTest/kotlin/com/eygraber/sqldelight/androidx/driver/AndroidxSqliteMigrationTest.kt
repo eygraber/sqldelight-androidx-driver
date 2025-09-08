@@ -10,6 +10,7 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 
 abstract class AndroidxSqliteMigrationTest {
   private fun getSchema(
@@ -595,5 +596,112 @@ abstract class AndroidxSqliteMigrationTest {
 
     assertEquals(0, create)
     assertEquals(1, update)
+  }
+
+  @Test
+  fun `exceptions thrown during migration are propagated to the caller`() {
+    val schema = getSchema {
+      throw RuntimeException("Test")
+    }
+    val dbName = Random.nextULong().toHexString()
+
+    // trigger creation
+    withDatabase(
+      schema = schema,
+      dbName = dbName,
+      onCreate = {},
+      onUpdate = { _, _ -> },
+      onOpen = {},
+      onConfigure = {},
+      deleteDbAfterRun = false,
+      configuration = AndroidxSqliteConfiguration(
+        isForeignKeyConstraintsEnabled = true,
+        isForeignKeyConstraintsCheckedAfterCreateOrUpdate = false,
+      ),
+    ) {
+      execute(null, "PRAGMA user_version;", 0, null)
+    }
+
+    schema.version++
+
+    withDatabase(
+      schema = schema,
+      dbName = dbName,
+      onCreate = {},
+      onUpdate = { _, _ -> },
+      onOpen = {},
+      onConfigure = {},
+      deleteDbBeforeRun = false,
+      configuration = AndroidxSqliteConfiguration(
+        isForeignKeyConstraintsEnabled = true,
+        isForeignKeyConstraintsCheckedAfterCreateOrUpdate = false,
+      ),
+    ) {
+      val message = assertFailsWith<RuntimeException> {
+        execute(null, "PRAGMA user_version;", 0, null)
+      }.message
+      assertEquals("Test", message)
+    }
+  }
+
+  @Test
+  fun `foreign keys are re-enabled after an exception is thrown during migration`() {
+    val schema = getSchema {
+      throw RuntimeException("Test")
+    }
+    val dbName = Random.nextULong().toHexString()
+
+    // trigger creation
+    withDatabase(
+      schema = schema,
+      dbName = dbName,
+      onCreate = {},
+      onUpdate = { _, _ -> },
+      onOpen = {},
+      onConfigure = {},
+      deleteDbAfterRun = false,
+      configuration = AndroidxSqliteConfiguration(
+        isForeignKeyConstraintsEnabled = true,
+        isForeignKeyConstraintsCheckedAfterCreateOrUpdate = false,
+      ),
+    ) {
+      execute(null, "PRAGMA user_version;", 0, null)
+    }
+
+    schema.version++
+
+    withDatabase(
+      schema = schema,
+      dbName = dbName,
+      onCreate = {},
+      onUpdate = { _, _ -> },
+      onOpen = {},
+      onConfigure = {},
+      deleteDbBeforeRun = false,
+      configuration = AndroidxSqliteConfiguration(
+        isForeignKeyConstraintsEnabled = true,
+        isForeignKeyConstraintsCheckedAfterCreateOrUpdate = false,
+      ),
+    ) {
+      assertFailsWith<RuntimeException> {
+        execute(null, "PRAGMA user_version;", 0, null)
+      }
+
+      assertTrue {
+        executeQuery(
+          identifier = null,
+          sql = "PRAGMA foreign_keys;",
+          mapper = { cursor ->
+            QueryResult.Value(
+              when {
+                cursor.next().value -> cursor.getLong(0)
+                else -> 0L
+              },
+            )
+          },
+          parameters = 0,
+        ).value == 1L
+      }
+    }
   }
 }
