@@ -483,40 +483,62 @@ private inline fun SQLiteConnection.withDeferredForeignKeyChecks(
     prepare("PRAGMA foreign_keys = OFF;").use(SQLiteStatement::step)
   }
 
-  block()
+  try {
+    block()
 
-  if(configuration.isForeignKeyConstraintsEnabled) {
-    prepare("PRAGMA foreign_keys = ON;").use(SQLiteStatement::step)
+    if(configuration.isForeignKeyConstraintsEnabled) {
+      prepare("PRAGMA foreign_keys = ON;").use(SQLiteStatement::step)
 
-    if(configuration.isForeignKeyConstraintsCheckedAfterCreateOrUpdate) {
-      prepare("PRAGMA foreign_key_check;").use { check ->
-        val violations = mutableListOf<AndroidxSqliteDriver.ForeignKeyConstraintViolation>()
-        var count = 0
-        while(check.step() && count++ < configuration.maxMigrationForeignKeyConstraintViolationsToReport) {
-          violations.add(
-            AndroidxSqliteDriver.ForeignKeyConstraintViolation(
-              referencingTable = check.getText(0),
-              referencingRowId = check.getInt(1),
-              referencedTable = check.getText(2),
-              referencingConstraintIndex = check.getInt(3),
-            ),
-          )
-        }
+      if(configuration.isForeignKeyConstraintsCheckedAfterCreateOrUpdate) {
+        reportForeignKeyViolations(
+          configuration.maxMigrationForeignKeyConstraintViolationsToReport,
+        )
+      }
+    }
+  } catch(e: Throwable) {
+    // An exception happened during creation / migration.
+    // We will try to re-enable foreign keys, and if that also fails,
+    // we will add it as a suppressed exception to the original one.
+    try {
+      if(configuration.isForeignKeyConstraintsEnabled) {
+        prepare("PRAGMA foreign_keys = ON;").use(SQLiteStatement::step)
+      }
+    } catch(fkException: Throwable) {
+      e.addSuppressed(fkException)
+    }
+    throw e
+  }
+}
 
-        if(violations.isNotEmpty()) {
-          val unprintedViolationsCount = violations.size - 5
-          val unprintedDisclaimer = if(unprintedViolationsCount > 0) " ($unprintedViolationsCount not shown)" else ""
+private fun SQLiteConnection.reportForeignKeyViolations(
+  maxMigrationForeignKeyConstraintViolationsToReport: Int,
+) {
+  prepare("PRAGMA foreign_key_check;").use { check ->
+    val violations = mutableListOf<AndroidxSqliteDriver.ForeignKeyConstraintViolation>()
+    var count = 0
+    while(check.step() && count++ < maxMigrationForeignKeyConstraintViolationsToReport) {
+      violations.add(
+        AndroidxSqliteDriver.ForeignKeyConstraintViolation(
+          referencingTable = check.getText(0),
+          referencingRowId = check.getInt(1),
+          referencedTable = check.getText(2),
+          referencingConstraintIndex = check.getInt(3),
+        ),
+      )
+    }
 
-          throw AndroidxSqliteDriver.ForeignKeyConstraintCheckException(
-            violations = violations,
-            message = """
+    if(violations.isNotEmpty()) {
+      val unprintedViolationsCount = violations.size - 5
+      val unprintedDisclaimer = if(unprintedViolationsCount > 0) " ($unprintedViolationsCount not shown)" else ""
+
+      throw AndroidxSqliteDriver.ForeignKeyConstraintCheckException(
+        violations = violations,
+        message = """
             |The following foreign key constraints are violated$unprintedDisclaimer:
             |
             |${violations.take(5).joinToString(separator = "\n\n")}
-            """.trimMargin(),
-          )
-        }
-      }
+        """.trimMargin(),
+      )
     }
   }
 }

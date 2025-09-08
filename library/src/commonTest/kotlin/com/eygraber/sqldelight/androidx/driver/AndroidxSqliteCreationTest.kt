@@ -10,6 +10,7 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 
 abstract class AndroidxSqliteCreationTest {
   private fun getSchema(
@@ -427,6 +428,74 @@ abstract class AndroidxSqliteCreationTest {
       ),
     ) {
       execute(null, "PRAGMA user_version;", 0, null)
+    }
+  }
+
+  @Test
+  fun `exceptions thrown during creation are propagated to the caller`() {
+    val schema = getSchema {
+      throw RuntimeException("Test")
+    }
+    val dbName = Random.nextULong().toHexString()
+
+    withDatabase(
+      schema = schema,
+      dbName = dbName,
+      onCreate = {},
+      onUpdate = { _, _ -> },
+      onOpen = {},
+      onConfigure = {},
+      configuration = AndroidxSqliteConfiguration(
+        isForeignKeyConstraintsEnabled = true,
+        isForeignKeyConstraintsCheckedAfterCreateOrUpdate = false,
+      ),
+    ) {
+      val message = assertFailsWith<RuntimeException> {
+        execute(null, "PRAGMA user_version;", 0, null)
+      }.message
+
+      assertEquals("Test", message)
+    }
+  }
+
+  @Test
+  fun `foreign keys are re-enabled after an exception is thrown during creation`() {
+    val schema = getSchema {
+      throw RuntimeException("Test")
+    }
+    val dbName = Random.nextULong().toHexString()
+
+    withDatabase(
+      schema = schema,
+      dbName = dbName,
+      onCreate = {},
+      onUpdate = { _, _ -> },
+      onOpen = {},
+      onConfigure = {},
+      configuration = AndroidxSqliteConfiguration(
+        isForeignKeyConstraintsEnabled = true,
+        isForeignKeyConstraintsCheckedAfterCreateOrUpdate = false,
+      ),
+    ) {
+      assertFailsWith<RuntimeException> {
+        execute(null, "PRAGMA user_version;", 0, null)
+      }
+
+      assertTrue {
+        executeQuery(
+          identifier = null,
+          sql = "PRAGMA foreign_keys;",
+          mapper = { cursor ->
+            QueryResult.Value(
+              when {
+                cursor.next().value -> cursor.getLong(0)
+                else -> 0L
+              },
+            )
+          },
+          parameters = 0,
+        ).value == 1L
+      }
     }
   }
 }
