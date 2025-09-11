@@ -282,4 +282,50 @@ abstract class AndroidxSqliteDriverTest {
       }
     }
   }
+
+  @Test
+  fun `row count is correctly returned after an insert`() {
+    val rowCount = driver.execute(null, "INSERT INTO test VALUES (?, ?)", 2) {
+      bindLong(0, 1)
+      bindString(1, "42")
+    }.value
+
+    assertEquals(1, rowCount)
+  }
+
+  @Test
+  fun `row count is correctly returned after an update`() {
+    val rowCount = driver.execute(null, "UPDATE test SET value = ?", 1) {
+      bindString(0, "42")
+    }.value
+
+    assertEquals(0, rowCount)
+
+    driver.execute(null, "INSERT INTO test VALUES (?, ?)", 2) {
+      bindLong(0, 1)
+      bindString(1, "41")
+    }
+
+    val rowCount2 = driver.execute(null, "UPDATE test SET value = ?", 1) {
+      bindString(0, "42")
+    }.value
+
+    assertEquals(1, rowCount2)
+  }
+
+  @Test
+  fun `row count is correctly returned after a delete`() {
+    val rowCount = driver.execute(null, "DELETE FROM test", 0).value
+
+    assertEquals(0, rowCount)
+
+    driver.execute(null, "INSERT INTO test VALUES (?, ?)", 2) {
+      bindLong(0, 1)
+      bindString(1, "41")
+    }
+
+    val rowCount2 = driver.execute(null, "DELETE FROM test", 0).value
+
+    assertEquals(1, rowCount2)
+  }
 }
