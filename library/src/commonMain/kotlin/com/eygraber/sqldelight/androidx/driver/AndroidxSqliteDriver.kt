@@ -348,6 +348,14 @@ public class AndroidxSqliteDriver(
   ): QueryResult<Long> {
     createOrMigrateIfNeeded()
 
+    fun SQLiteConnection.getTotalChangedRows() =
+      prepare("SELECT changes()").use { statement ->
+        when {
+          statement.step() -> statement.getLong(0)
+          else -> 0
+        }
+      }
+
     val transaction = currentTransaction()
     if(transaction == null) {
       val writerConnection = connectionPool.acquireWriterConnection()
@@ -362,7 +370,10 @@ public class AndroidxSqliteDriver(
             )
           },
           binders = binders,
-          result = { execute() },
+          result = {
+            execute()
+            writerConnection.getTotalChangedRows()
+          },
         )
       } finally {
         connectionPool.releaseWriterConnection()
@@ -379,7 +390,10 @@ public class AndroidxSqliteDriver(
           )
         },
         binders = binders,
-        result = { execute() },
+        result = {
+          execute()
+          connection.getTotalChangedRows()
+        },
       )
     }
   }
@@ -564,7 +578,7 @@ private fun SQLiteConnection.reportForeignKeyViolations(
 }
 
 internal interface AndroidxStatement : SqlPreparedStatement {
-  fun execute(): Long
+  fun execute()
   fun <R> executeQuery(mapper: (SqlCursor) -> QueryResult<R>): R
   fun reset()
   fun close()
@@ -601,12 +615,11 @@ private class AndroidxPreparedStatement(
   override fun <R> executeQuery(mapper: (SqlCursor) -> QueryResult<R>): R =
     throw UnsupportedOperationException()
 
-  override fun execute(): Long {
+  override fun execute() {
     var cont = true
     while(cont) {
       cont = statement.step()
     }
-    return statement.getColumnCount().toLong()
   }
 
   override fun toString() = sql
