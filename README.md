@@ -58,7 +58,7 @@ and on Android you can pass a `Context` to create the file in the app's database
 Database(
   AndroidxSqliteDriver(
     driver = BundledSQLiteDriver(),
-    type = AndroidxSqliteDatabaseType.File(context, "my.db"),
+    type = AndroidxSqliteDatabaseType.FileProvider(context, "my.db"),
     schema = Database.Schema,
   )
 )
