@@ -482,7 +482,10 @@ public class AndroidxSqliteDriver(
             val driver = this
             val transacter = object : TransacterImpl(driver) {}
 
-            writerConnection.withDeferredForeignKeyChecks(configuration) {
+            writerConnection.withDeferredForeignKeyChecks(
+              transacter = transacter,
+              configuration = configuration,
+            ) {
               transacter.transaction {
                 when {
                   isCreate -> schema.create(driver).value
@@ -510,23 +513,30 @@ public class AndroidxSqliteDriver(
 }
 
 private inline fun SQLiteConnection.withDeferredForeignKeyChecks(
+  transacter: Transacter,
   configuration: AndroidxSqliteConfiguration,
-  block: () -> Unit,
+  crossinline block: () -> Unit,
 ) {
   if(configuration.isForeignKeyConstraintsEnabled) {
     prepare("PRAGMA foreign_keys = OFF;").use(SQLiteStatement::step)
   }
 
   try {
-    block()
+    // AndroidSQLiteDriver requires foreign_key_check to be run
+    // in the same transaction as the creation / migration.
+    // BundledSQLiteDriver fails if one big transaction is used.
+    // Both seem to be happy with this nested transaction ¯\_(ツ)_/¯
+    transacter.transaction {
+      block()
 
-    if(configuration.isForeignKeyConstraintsEnabled) {
-      prepare("PRAGMA foreign_keys = ON;").use(SQLiteStatement::step)
+      if(configuration.isForeignKeyConstraintsEnabled) {
+        prepare("PRAGMA foreign_keys = ON;").use(SQLiteStatement::step)
 
-      if(configuration.isForeignKeyConstraintsCheckedAfterCreateOrUpdate) {
-        reportForeignKeyViolations(
-          configuration.maxMigrationForeignKeyConstraintViolationsToReport,
-        )
+        if(configuration.isForeignKeyConstraintsCheckedAfterCreateOrUpdate) {
+          reportForeignKeyViolations(
+            configuration.maxMigrationForeignKeyConstraintViolationsToReport,
+          )
+        }
       }
     }
   } catch(e: Throwable) {
