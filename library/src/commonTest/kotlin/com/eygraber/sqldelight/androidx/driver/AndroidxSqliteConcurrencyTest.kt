@@ -223,7 +223,7 @@ abstract class AndroidxSqliteConcurrencyTest {
       val jobs = mutableListOf<Job>()
       repeat(CONCURRENCY) {
         jobs += launch(IoDispatcher) {
-          execute(null, "PRAGMA journal_mode = WAL;", 0, null)
+          executeQuery(null, "PRAGMA journal_mode = WAL;", { QueryResult.Unit }, 0, null)
         }
       }
 
