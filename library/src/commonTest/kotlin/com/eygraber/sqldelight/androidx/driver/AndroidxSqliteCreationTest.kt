@@ -130,7 +130,7 @@ abstract class AndroidxSqliteCreationTest {
 
     val result = runCatching {
       AndroidxSqliteDriver(
-        createConnection = androidxSqliteTestCreateConnection(),
+        connectionFactory = androidxSqliteTestConnectionFactory(),
         databaseType = createDatabaseType(fullDbName),
         schema = schema,
         configuration = configuration,

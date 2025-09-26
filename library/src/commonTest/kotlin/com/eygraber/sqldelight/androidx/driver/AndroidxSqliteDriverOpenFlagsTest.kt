@@ -59,7 +59,7 @@ abstract class AndroidxSqliteDriverOpenFlagsTest {
 
   private fun setupDatabase(
     schema: SqlSchema<QueryResult.Value<Unit>>,
-  ): SqlDriver = AndroidxSqliteDriver(androidxSqliteTestCreateConnection(), AndroidxSqliteDatabaseType.Memory, schema)
+  ): SqlDriver = AndroidxSqliteDriver(androidxSqliteTestConnectionFactory(), AndroidxSqliteDatabaseType.Memory, schema)
 
   private fun changes(): Long? =
     // wrap in a transaction to ensure read happens on transaction thread/connection

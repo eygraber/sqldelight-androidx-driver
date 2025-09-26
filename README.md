@@ -69,8 +69,11 @@ If you want to provide `OpenFlags` to the bundled or native driver, you can use:
 ```kotlin
 Database(
   AndroidxSqliteDriver(
-    createConnection = { name ->
-      BundledSQLiteDriver().open(name, SQLITE_OPEN_READWRITE or SQLITE_OPEN_CREATE)
+    connectionFactory = object : AndroidxConnectionFactory {
+      override val driver = BundledSQLiteDriver()
+      
+      override fun createConnection(name: String) =
+        driver.open(name, SQLITE_OPEN_READWRITE or SQLITE_OPEN_CREATE)
     },
     type = AndroidxSqliteDatabaseType.File("<absolute path to db file>"),
     schema = Database.Schema,

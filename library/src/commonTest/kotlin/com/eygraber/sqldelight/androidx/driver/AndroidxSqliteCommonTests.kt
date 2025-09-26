@@ -1,6 +1,5 @@
 package com.eygraber.sqldelight.androidx.driver
 
-import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.SQLiteDriver
 import app.cash.sqldelight.Transacter
 import kotlinx.coroutines.CoroutineDispatcher
@@ -16,7 +15,8 @@ expect class CommonQueryTest() : AndroidxSqliteQueryTest
 expect class CommonTransacterTest() : AndroidxSqliteTransacterTest
 
 expect fun androidxSqliteTestDriver(): SQLiteDriver
-expect fun androidxSqliteTestCreateConnection(): (String) -> SQLiteConnection
+fun androidxSqliteTestConnectionFactory(): AndroidxSqliteConnectionFactory =
+  DefaultAndroidxSqliteConnectionFactory(androidxSqliteTestDriver())
 
 expect val IoDispatcher: CoroutineDispatcher
 

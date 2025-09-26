@@ -1,7 +1,6 @@
 package com.eygraber.sqldelight.androidx.driver
 
 import android.app.Application
-import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.SQLiteDriver
 import androidx.sqlite.driver.AndroidSQLiteDriver
 import androidx.test.core.app.ApplicationProvider
@@ -57,10 +56,6 @@ actual class CommonQueryTest : AndroidxSqliteQueryTest()
 actual class CommonTransacterTest : AndroidxSqliteTransacterTest()
 
 actual fun androidxSqliteTestDriver(): SQLiteDriver = AndroidSQLiteDriver()
-
-actual fun androidxSqliteTestCreateConnection(): (String) -> SQLiteConnection = { name ->
-  AndroidSQLiteDriver().open(name)
-}
 
 @Suppress("InjectDispatcher")
 actual val IoDispatcher: CoroutineDispatcher get() = Dispatchers.IO
