@@ -55,9 +55,7 @@ abstract class AndroidxSqliteIntegrationTest {
 
   val driver by lazy {
     AndroidxSqliteDriver(
-      createConnection = { name ->
-        BundledSQLiteDriver().open(name)
-      },
+      driver = BundledSQLiteDriver(),
       databaseType = type,
       schema = AndroidXDb.Schema,
       configuration = configuration,

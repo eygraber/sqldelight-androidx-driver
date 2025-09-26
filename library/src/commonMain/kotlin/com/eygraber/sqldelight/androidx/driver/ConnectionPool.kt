@@ -19,7 +19,7 @@ public interface ConnectionPool : AutoCloseable {
 }
 
 internal class AndroidxDriverConnectionPool(
-  private val createConnection: (String) -> SQLiteConnection,
+  private val connectionFactory: AndroidxSqliteConnectionFactory,
   nameProvider: () -> String,
   isFileBased: Boolean,
   configuration: AndroidxSqliteConfiguration,
@@ -34,7 +34,9 @@ internal class AndroidxDriverConnectionPool(
   private val name by lazy { nameProvider() }
 
   private val writerConnection: SQLiteConnection by lazy {
-    createConnection(name).withConfiguration(configuration)
+    connectionFactory
+      .createConnection(name)
+      .withConfiguration(configuration)
   }
 
   private val writerMutex = Mutex()
@@ -52,7 +54,9 @@ internal class AndroidxDriverConnectionPool(
         ReaderSQLiteConnection(
           isCreated = false,
           lazy {
-            createConnection(name).withConfiguration(configuration)
+            connectionFactory
+              .createConnection(name)
+              .withConfiguration(configuration)
           },
         ),
       )
@@ -172,7 +176,7 @@ internal class AndroidxDriverConnectionPool(
 }
 
 internal class PassthroughConnectionPool(
-  private val createConnection: (String) -> SQLiteConnection,
+  private val connectionFactory: AndroidxSqliteConnectionFactory,
   nameProvider: () -> String,
   configuration: AndroidxSqliteConfiguration,
 ) : ConnectionPool {
@@ -181,7 +185,7 @@ internal class PassthroughConnectionPool(
   private val name by lazy { nameProvider() }
 
   private val delegatedConnection: SQLiteConnection by lazy {
-    createConnection(name).withConfiguration(configuration)
+    connectionFactory.createConnection(name).withConfiguration(configuration)
   }
 
   override fun acquireWriterConnection() = delegatedConnection

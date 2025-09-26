@@ -34,7 +34,7 @@ internal expect class TransactionsThreadLocal() {
  * @see SqlSchema.migrate
  */
 public class AndroidxSqliteDriver(
-  createConnection: (String) -> SQLiteConnection,
+  connectionFactory: AndroidxSqliteConnectionFactory,
   databaseType: AndroidxSqliteDatabaseType,
   private val schema: SqlSchema<QueryResult.Value<Unit>>,
   private val configuration: AndroidxSqliteConfiguration = AndroidxSqliteConfiguration(),
@@ -53,7 +53,7 @@ public class AndroidxSqliteDriver(
   private val onCreate: AndroidxSqliteDriver.() -> Unit = {},
   private val onUpdate: AndroidxSqliteDriver.(Long, Long) -> Unit = { _, _ -> },
   private val onOpen: AndroidxSqliteDriver.() -> Unit = {},
-  isConnectionPoolProvidedByDriver: Boolean = false,
+  isConnectionPoolProvidedByDriver: Boolean = connectionFactory.driver.hasConnectionPool,
   /**
    * This [ConnectionPool] will be used even if [isConnectionPoolProvidedByDriver] is `true`
    */
@@ -86,7 +86,7 @@ public class AndroidxSqliteDriver(
     connectionPool: ConnectionPool? = null,
     vararg migrationCallbacks: AfterVersion,
   ) : this(
-    createConnection = driver::open,
+    connectionFactory = DefaultAndroidxSqliteConnectionFactory(driver),
     databaseType = databaseType,
     schema = schema,
     configuration = configuration,
@@ -142,14 +142,14 @@ public class AndroidxSqliteDriver(
     connectionPool ?: when {
       isConnectionPoolProvidedByDriver ->
         PassthroughConnectionPool(
-          createConnection = createConnection,
+          connectionFactory = connectionFactory,
           nameProvider = nameProvider,
           configuration = configuration,
         )
 
       else ->
         AndroidxDriverConnectionPool(
-          createConnection = createConnection,
+          connectionFactory = connectionFactory,
           nameProvider = nameProvider,
           isFileBased = when(databaseType) {
             is AndroidxSqliteDatabaseType.File -> true
