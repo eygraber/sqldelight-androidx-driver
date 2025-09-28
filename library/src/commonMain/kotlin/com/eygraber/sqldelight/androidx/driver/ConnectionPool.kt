@@ -1,7 +1,7 @@
 package com.eygraber.sqldelight.androidx.driver
 
 import androidx.sqlite.SQLiteConnection
-import androidx.sqlite.SQLiteStatement
+import androidx.sqlite.execSQL
 import kotlinx.atomicfu.atomic
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.runBlocking
@@ -136,7 +136,7 @@ internal class AndroidxDriverConnectionPool(
   private fun runPragmaOnAllConnections(sql: String) {
     val writer = acquireWriterConnection()
     try {
-      writer.writePragma(sql)
+      writer.execSQL(sql)
     } finally {
       releaseWriterConnection()
     }
@@ -148,7 +148,7 @@ internal class AndroidxDriverConnectionPool(
           try {
             // only apply the pragma to connections that were already created
             if(reader.isCreated) {
-              reader.connection.value.writePragma(sql)
+              reader.connection.value.execSQL(sql)
             }
           } finally {
             readerChannel.send(reader)
@@ -202,7 +202,7 @@ internal class PassthroughConnectionPool(
     )
 
     val foreignKeys = if(isForeignKeyConstraintsEnabled) "ON" else "OFF"
-    delegatedConnection.writePragma("PRAGMA foreign_keys = $foreignKeys;")
+    delegatedConnection.execSQL("PRAGMA foreign_keys = $foreignKeys;")
   }
 
   override fun setJournalMode(journalMode: SqliteJournalMode) {
@@ -210,7 +210,11 @@ internal class PassthroughConnectionPool(
       journalMode = journalMode,
     )
 
-    delegatedConnection.writePragma("PRAGMA journal_mode = ${configuration.journalMode.value};")
+    delegatedConnection.execSQL("PRAGMA journal_mode = ${configuration.journalMode.value};")
+
+    // this needs to come after PRAGMA journal_mode until https://issuetracker.google.com/issues/447613208 is fixed
+    val foreignKeys = if(configuration.isForeignKeyConstraintsEnabled) "ON" else "OFF"
+    delegatedConnection.execSQL("PRAGMA foreign_keys = $foreignKeys;")
   }
 
   override fun setSync(sync: SqliteSync) {
@@ -218,7 +222,7 @@ internal class PassthroughConnectionPool(
       sync = sync,
     )
 
-    delegatedConnection.writePragma("PRAGMA synchronous = ${configuration.sync.value};")
+    delegatedConnection.execSQL("PRAGMA synchronous = ${configuration.sync.value};")
   }
 
   override fun close() {
@@ -231,13 +235,11 @@ private fun SQLiteConnection.withConfiguration(
 ): SQLiteConnection = this.apply {
   // copy the configuration for thread safety
   configuration.copy().apply {
-    val foreignKeys = if(isForeignKeyConstraintsEnabled) "ON" else "OFF"
-    writePragma("PRAGMA foreign_keys = $foreignKeys;")
-    writePragma("PRAGMA journal_mode = ${journalMode.value};")
-    writePragma("PRAGMA synchronous = ${sync.value};")
-  }
-}
+    execSQL("PRAGMA journal_mode = ${journalMode.value};")
+    execSQL("PRAGMA synchronous = ${sync.value};")
 
-private fun SQLiteConnection.writePragma(sql: String) {
-  prepare(sql).use(SQLiteStatement::step)
+    // this needs to come after PRAGMA journal_mode until https://issuetracker.google.com/issues/447613208 is fixed
+    val foreignKeys = if(isForeignKeyConstraintsEnabled) "ON" else "OFF"
+    execSQL("PRAGMA foreign_keys = $foreignKeys;")
+  }
 }

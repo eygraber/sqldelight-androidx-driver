@@ -482,22 +482,35 @@ public class AndroidxSqliteDriver(
             val driver = this
             val transacter = object : TransacterImpl(driver) {}
 
-            writerConnection.withDeferredForeignKeyChecks(
-              transacter = transacter,
-              configuration = configuration,
-            ) {
-              transacter.transaction {
-                when {
-                  isCreate -> schema.create(driver).value
-                  else -> schema.migrate(driver, currentVersion, schema.version, *migrationCallbacks).value
+            try {
+              // It's a little gross that we use writerConnection here after releasing it above
+              // but ultimately it's the best way forward for now, since acquiring the writer connection
+              // isn't re-entrant, and create/migrate will likely try to acquire the writer connection at some point.
+              // There **should** only be one active thread throughout this process, so it **should** be safe...
+              writerConnection.withForeignKeysDisabled(configuration) {
+                transacter.transaction {
+                  when {
+                    isCreate -> schema.create(driver).value
+                    else -> schema.migrate(driver, currentVersion, schema.version, *migrationCallbacks).value
+                  }
+
+                  if(configuration.isForeignKeyConstraintsCheckedAfterCreateOrUpdate) {
+                    writerConnection.reportForeignKeyViolations(
+                      configuration.maxMigrationForeignKeyConstraintViolationsToReport,
+                    )
+                  }
+
+                  writerConnection.execSQL("PRAGMA user_version = ${schema.version}")
                 }
-                skipStatementsCache = configuration.cacheSize == 0
-                when {
-                  isCreate -> onCreate()
-                  else -> onUpdate(currentVersion, schema.version)
-                }
-                writerConnection.prepare("PRAGMA user_version = ${schema.version}").use { it.step() }
               }
+            }
+            finally {
+              skipStatementsCache = configuration.cacheSize == 0
+            }
+
+            when {
+              isCreate -> onCreate()
+              else -> onUpdate(currentVersion, schema.version)
             }
           } else {
             skipStatementsCache = configuration.cacheSize == 0
@@ -512,32 +525,19 @@ public class AndroidxSqliteDriver(
   }
 }
 
-private inline fun SQLiteConnection.withDeferredForeignKeyChecks(
-  transacter: Transacter,
+private inline fun SQLiteConnection.withForeignKeysDisabled(
   configuration: AndroidxSqliteConfiguration,
   crossinline block: () -> Unit,
 ) {
   if(configuration.isForeignKeyConstraintsEnabled) {
-    prepare("PRAGMA foreign_keys = OFF;").use(SQLiteStatement::step)
+    execSQL("PRAGMA foreign_keys = OFF;")
   }
 
   try {
-    // AndroidSQLiteDriver requires foreign_key_check to be run
-    // in the same transaction as the creation / migration.
-    // BundledSQLiteDriver fails if one big transaction is used.
-    // Both seem to be happy with this nested transaction ¯\_(ツ)_/¯
-    transacter.transaction {
-      block()
+    block()
 
-      if(configuration.isForeignKeyConstraintsEnabled) {
-        prepare("PRAGMA foreign_keys = ON;").use(SQLiteStatement::step)
-
-        if(configuration.isForeignKeyConstraintsCheckedAfterCreateOrUpdate) {
-          reportForeignKeyViolations(
-            configuration.maxMigrationForeignKeyConstraintViolationsToReport,
-          )
-        }
-      }
+    if(configuration.isForeignKeyConstraintsEnabled) {
+      execSQL("PRAGMA foreign_keys = ON;")
     }
   } catch(e: Throwable) {
     // An exception happened during creation / migration.
@@ -545,7 +545,7 @@ private inline fun SQLiteConnection.withDeferredForeignKeyChecks(
     // we will add it as a suppressed exception to the original one.
     try {
       if(configuration.isForeignKeyConstraintsEnabled) {
-        prepare("PRAGMA foreign_keys = ON;").use(SQLiteStatement::step)
+        execSQL("PRAGMA foreign_keys = ON;")
       }
     } catch(fkException: Throwable) {
       e.addSuppressed(fkException)

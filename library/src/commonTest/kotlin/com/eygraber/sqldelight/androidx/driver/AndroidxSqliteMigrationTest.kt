@@ -218,6 +218,127 @@ abstract class AndroidxSqliteMigrationTest {
   }
 
   @Test
+  fun `foreign keys are disabled during migration`() {
+    val schema = getSchema {
+      assertTrue {
+        executeQuery(
+          identifier = null,
+          sql = "PRAGMA foreign_keys;",
+          mapper = { cursor ->
+            QueryResult.Value(
+              when {
+                cursor.next().value -> cursor.getLong(0)
+                else -> 0L
+              },
+            )
+          },
+          parameters = 0,
+        ).value == 0L
+      }
+    }
+
+    val dbName = Random.nextULong().toHexString()
+
+    // trigger creation
+    withDatabase(
+      schema = schema,
+      dbName = dbName,
+      onCreate = {},
+      onUpdate = { _, _ -> },
+      onOpen = {},
+      onConfigure = {},
+      deleteDbAfterRun = false,
+    ) {
+      val result = executeQuery(
+        identifier = null,
+        sql = "SELECT COUNT(*) FROM post",
+        mapper = { cursor ->
+          if(cursor.next().value) {
+            QueryResult.Value(cursor.getLong(0))
+          } else {
+            QueryResult.Value(null)
+          }
+        },
+        parameters = 0,
+      )
+
+      assertEquals(4, result.value)
+    }
+
+    schema.version++
+    withDatabase(
+      schema = schema,
+      dbName = dbName,
+      onCreate = {},
+      onUpdate = { _, _ -> },
+      onOpen = {},
+      onConfigure = {},
+      deleteDbBeforeRun = false,
+    ) {
+      execute(null, "PRAGMA user_version;", 0, null)
+    }
+  }
+
+  @Test
+  fun `foreign keys are re-enabled after successful migration`() {
+    val schema = getSchema()
+    val dbName = Random.nextULong().toHexString()
+
+    // trigger creation
+    withDatabase(
+      schema = schema,
+      dbName = dbName,
+      onCreate = {},
+      onUpdate = { _, _ -> },
+      onOpen = {},
+      onConfigure = {},
+      deleteDbAfterRun = false,
+    ) {
+      val result = executeQuery(
+        identifier = null,
+        sql = "SELECT COUNT(*) FROM post",
+        mapper = { cursor ->
+          if(cursor.next().value) {
+            QueryResult.Value(cursor.getLong(0))
+          } else {
+            QueryResult.Value(null)
+          }
+        },
+        parameters = 0,
+      )
+
+      assertEquals(4, result.value)
+    }
+
+    schema.version++
+    withDatabase(
+      schema = schema,
+      dbName = dbName,
+      onCreate = {},
+      onUpdate = { _, _ -> },
+      onOpen = {},
+      onConfigure = {},
+      deleteDbBeforeRun = false,
+    ) {
+      assertTrue {
+        executeQuery(
+          identifier = null,
+          sql = "PRAGMA foreign_keys;",
+          mapper = { cursor ->
+            QueryResult.Value(
+              when {
+                cursor.next().value -> cursor.getLong(0)
+                else -> 0L
+              },
+            )
+          },
+          parameters = 0,
+        ).value == 1L
+      }
+    }
+  }
+
+  @Test
   fun `foreign key constraint violations during migrations fail after the migration`() {
     val configuration = AndroidxSqliteConfiguration(
       isForeignKeyConstraintsEnabled = true,

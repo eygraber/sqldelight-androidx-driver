@@ -188,6 +188,71 @@ abstract class AndroidxSqliteCreationTest {
   }
 
   @Test
+  fun `foreign keys are disabled during creation`() {
+    val schema = getSchema {
+      assertTrue {
+        executeQuery(
+          identifier = null,
+          sql = "PRAGMA foreign_keys;",
+          mapper = { cursor ->
+            QueryResult.Value(
+              when {
+                cursor.next().value -> cursor.getLong(0)
+                else -> 0L
+              },
+            )
+          },
+          parameters = 0,
+        ).value == 0L
+      }
+    }
+
+    val dbName = Random.nextULong().toHexString()
+
+    withDatabase(
+      schema = schema,
+      dbName = dbName,
+      onCreate = {},
+      onUpdate = { _, _ -> },
+      onOpen = {},
+      onConfigure = {},
+    ) {
+      execute(null, "PRAGMA user_version;", 0, null)
+    }
+  }
+
+  @Test
+  fun `foreign keys are re-enabled after successful creation`() {
+    val schema = getSchema()
+    val dbName = Random.nextULong().toHexString()
+
+    withDatabase(
+      schema = schema,
+      dbName = dbName,
+      onCreate = {},
+      onUpdate = { _, _ -> },
+      onOpen = {},
+      onConfigure = {},
+    ) {
+      assertTrue {
+        executeQuery(
+          identifier = null,
+          sql = "PRAGMA foreign_keys;",
+          mapper = { cursor ->
+            QueryResult.Value(
+              when {
+                cursor.next().value -> cursor.getLong(0)
+                else -> 0L
+              },
+            )
+          },
+          parameters = 0,
+        ).value == 1L
+      }
+    }
+  }
+
+  @Test
   fun `foreign key constraint violations during creation fail after the creation`() {
     val configuration = AndroidxSqliteConfiguration(
       isForeignKeyConstraintsEnabled = true,
