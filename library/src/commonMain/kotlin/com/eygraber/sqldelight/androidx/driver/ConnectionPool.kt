@@ -9,13 +9,15 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 public interface ConnectionPool : AutoCloseable {
+  public val configuration: AndroidxSqliteConfiguration
+
   public fun acquireWriterConnection(): SQLiteConnection
   public fun releaseWriterConnection()
   public fun acquireReaderConnection(): SQLiteConnection
   public fun releaseReaderConnection(connection: SQLiteConnection)
-  public fun setForeignKeyConstraintsEnabled(isForeignKeyConstraintsEnabled: Boolean)
   public fun setJournalMode(journalMode: SqliteJournalMode)
-  public fun setSync(sync: SqliteSync)
+  public fun updateForeignKeyConstraintsEnabled(isForeignKeyConstraintsEnabled: Boolean)
+  public fun updateSync(sync: SqliteSync)
 }
 
 internal class AndroidxDriverConnectionPool(
@@ -29,14 +31,14 @@ internal class AndroidxDriverConnectionPool(
     val connection: Lazy<SQLiteConnection>,
   )
 
-  private var configuration by atomic(configuration)
+  override var configuration by atomic(configuration)
 
   private val name by lazy { nameProvider() }
 
   private val writerConnection: SQLiteConnection by lazy {
     connectionFactory
       .createConnection(name)
-      .withConfiguration(configuration)
+      .withWriterConfiguration(configuration)
   }
 
   private val writerMutex = Mutex()
@@ -56,7 +58,7 @@ internal class AndroidxDriverConnectionPool(
           lazy {
             connectionFactory
               .createConnection(name)
-              .withConfiguration(configuration)
+              .withReaderConfiguration(configuration)
           },
         ),
       )
@@ -108,32 +110,27 @@ internal class AndroidxDriverConnectionPool(
     }
   }
 
-  override fun setForeignKeyConstraintsEnabled(isForeignKeyConstraintsEnabled: Boolean) {
-    configuration = configuration.copy(
-      isForeignKeyConstraintsEnabled = isForeignKeyConstraintsEnabled,
-    )
-
-    val foreignKeys = if(isForeignKeyConstraintsEnabled) "ON" else "OFF"
-    runPragmaOnAllConnections("PRAGMA foreign_keys = $foreignKeys;")
-  }
-
   override fun setJournalMode(journalMode: SqliteJournalMode) {
     configuration = configuration.copy(
       journalMode = journalMode,
     )
 
-    runPragmaOnAllConnections("PRAGMA journal_mode = ${configuration.journalMode.value};")
+    runPragmaOnAllCreatedConnections("PRAGMA journal_mode = ${configuration.journalMode.value};")
   }
 
-  override fun setSync(sync: SqliteSync) {
+  override fun updateForeignKeyConstraintsEnabled(isForeignKeyConstraintsEnabled: Boolean) {
+    configuration = configuration.copy(
+      isForeignKeyConstraintsEnabled = isForeignKeyConstraintsEnabled,
+    )
+  }
+
+  override fun updateSync(sync: SqliteSync) {
     configuration = configuration.copy(
       sync = sync,
     )
-
-    runPragmaOnAllConnections("PRAGMA synchronous = ${configuration.sync.value};")
   }
 
-  private fun runPragmaOnAllConnections(sql: String) {
+  private fun runPragmaOnAllCreatedConnections(sql: String) {
     val writer = acquireWriterConnection()
     try {
       writer.execSQL(sql)
@@ -180,12 +177,12 @@ internal class PassthroughConnectionPool(
   nameProvider: () -> String,
   configuration: AndroidxSqliteConfiguration,
 ) : ConnectionPool {
-  private var configuration by atomic(configuration)
+  override var configuration by atomic(configuration)
 
   private val name by lazy { nameProvider() }
 
   private val delegatedConnection: SQLiteConnection by lazy {
-    connectionFactory.createConnection(name).withConfiguration(configuration)
+    connectionFactory.createConnection(name).withWriterConfiguration(configuration)
   }
 
   override fun acquireWriterConnection() = delegatedConnection
@@ -195,15 +192,6 @@ internal class PassthroughConnectionPool(
   override fun acquireReaderConnection() = delegatedConnection
 
   override fun releaseReaderConnection(connection: SQLiteConnection) {}
-
-  override fun setForeignKeyConstraintsEnabled(isForeignKeyConstraintsEnabled: Boolean) {
-    configuration = configuration.copy(
-      isForeignKeyConstraintsEnabled = isForeignKeyConstraintsEnabled,
-    )
-
-    val foreignKeys = if(isForeignKeyConstraintsEnabled) "ON" else "OFF"
-    delegatedConnection.execSQL("PRAGMA foreign_keys = $foreignKeys;")
-  }
 
   override fun setJournalMode(journalMode: SqliteJournalMode) {
     configuration = configuration.copy(
@@ -217,12 +205,16 @@ internal class PassthroughConnectionPool(
     delegatedConnection.execSQL("PRAGMA foreign_keys = $foreignKeys;")
   }
 
-  override fun setSync(sync: SqliteSync) {
+  override fun updateForeignKeyConstraintsEnabled(isForeignKeyConstraintsEnabled: Boolean) {
+    configuration = configuration.copy(
+      isForeignKeyConstraintsEnabled = isForeignKeyConstraintsEnabled,
+    )
+  }
+
+  override fun updateSync(sync: SqliteSync) {
     configuration = configuration.copy(
       sync = sync,
     )
-
-    delegatedConnection.execSQL("PRAGMA synchronous = ${configuration.sync.value};")
   }
 
   override fun close() {
@@ -230,7 +222,7 @@ internal class PassthroughConnectionPool(
   }
 }
 
-private fun SQLiteConnection.withConfiguration(
+private fun SQLiteConnection.withWriterConfiguration(
   configuration: AndroidxSqliteConfiguration,
 ): SQLiteConnection = this.apply {
   // copy the configuration for thread safety
@@ -242,4 +234,11 @@ private fun SQLiteConnection.withConfiguration(
     val foreignKeys = if(isForeignKeyConstraintsEnabled) "ON" else "OFF"
     execSQL("PRAGMA foreign_keys = $foreignKeys;")
   }
+}
+
+private fun SQLiteConnection.withReaderConfiguration(
+  configuration: AndroidxSqliteConfiguration,
+): SQLiteConnection = this.apply {
+  // copy the configuration for thread safety
+  execSQL("PRAGMA journal_mode = ${configuration.copy().journalMode.value};")
 }

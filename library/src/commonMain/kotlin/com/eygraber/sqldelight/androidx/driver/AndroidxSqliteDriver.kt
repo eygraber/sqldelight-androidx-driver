@@ -37,7 +37,7 @@ public class AndroidxSqliteDriver(
   connectionFactory: AndroidxSqliteConnectionFactory,
   databaseType: AndroidxSqliteDatabaseType,
   private val schema: SqlSchema<QueryResult.Value<Unit>>,
-  private val configuration: AndroidxSqliteConfiguration = AndroidxSqliteConfiguration(),
+  configuration: AndroidxSqliteConfiguration = AndroidxSqliteConfiguration(),
   private val migrateEmptySchema: Boolean = false,
   /**
    * A callback to configure the database connection when it's first opened.
@@ -124,6 +124,8 @@ public class AndroidxSqliteDriver(
   @Suppress("NonBooleanPropertyPrefixedWithIs")
   private val isFirstInteraction = atomic(true)
 
+  private val configuration get() = connectionPool.configuration
+
   private val connectionPool by lazy {
     val nameProvider = when(databaseType) {
       is AndroidxSqliteDatabaseType.File -> databaseType::databaseFilePath
@@ -196,24 +198,15 @@ public class AndroidxSqliteDriver(
   private val migrationCallbacks = migrationCallbacks
 
   /**
-   * True if foreign key constraints are enabled.
-   *
-   * This function will block until all created connections have been updated.
-   *
-   * An exception will be thrown if this is called from within a transaction.
-   */
-  public fun setForeignKeyConstraintsEnabled(isForeignKeyConstraintsEnabled: Boolean) {
-    check(currentTransaction() == null) {
-      "setForeignKeyConstraintsEnabled cannot be called from within a transaction"
-    }
-
-    connectionPool.setForeignKeyConstraintsEnabled(isForeignKeyConstraintsEnabled)
-  }
-
-  /**
    * Journal mode to use.
    *
-   * This function will block until all created connections have been updated.
+   * This function will block until pending schema creation/migration is completed,
+   * and all created connections have been updated.
+   *
+   * Note that this means that this [SqliteJournalMode] **will not** be used for schema creation/migration.
+   *
+   * Please use [AndroidxSqliteConfiguration] or [onConfigure] if a specific [SqliteJournalMode] is needed
+   * during schema creation/migration.
    *
    * An exception will be thrown if this is called from within a transaction.
    */
@@ -222,13 +215,35 @@ public class AndroidxSqliteDriver(
       "setJournalMode cannot be called from within a transaction"
     }
 
+    // run creation or migration if needed before setting the journal mode
+    createOrMigrateIfNeeded()
+
     connectionPool.setJournalMode(journalMode)
   }
 
   /**
-   * Synchronous mode to use.
+   * This function will block until executed on the writer connection.
    *
-   * This function will block until all created connections have been updated.
+   * An exception will be thrown if this is called from within a transaction.
+   */
+  public fun setForeignKeyConstraintsEnabled(isForeignKeyConstraintsEnabled: Boolean) {
+    check(currentTransaction() == null) {
+      "setForeignKeyConstraintsEnabled cannot be called from within a transaction"
+    }
+
+    connectionPool.updateForeignKeyConstraintsEnabled(isForeignKeyConstraintsEnabled)
+
+    val foreignKeys = if(isForeignKeyConstraintsEnabled) "ON" else "OFF"
+    execute(
+      identifier = null,
+      sql = "PRAGMA foreign_keys = $foreignKeys;",
+      parameters = 0,
+      binders = null,
+    )
+  }
+
+  /**
+   * This function will block until executed on the writer connection.
    *
    * An exception will be thrown if this is called from within a transaction.
    */
@@ -237,7 +252,14 @@ public class AndroidxSqliteDriver(
       "setSync cannot be called from within a transaction"
     }
 
-    connectionPool.setSync(sync)
+    connectionPool.updateSync(sync)
+
+    execute(
+      identifier = null,
+      sql = "PRAGMA synchronous = ${sync.value};",
+      parameters = 0,
+      binders = null,
+    )
   }
 
   override fun addListener(vararg queryKeys: String, listener: Query.Listener) {
@@ -407,8 +429,15 @@ public class AndroidxSqliteDriver(
   ): QueryResult.Value<R> {
     createOrMigrateIfNeeded()
 
+    // PRAGMA foreign_keys and synchronous should always be queried from the writer connection
+    // since these are per-connection settings and only the writer connection has them set
+    val shouldUseWriterConnection = sql.trim().run {
+      startsWith("PRAGMA foreign_keys", ignoreCase = true) ||
+        startsWith("PRAGMA synchronous", ignoreCase = true)
+    }
+
     val transaction = currentTransaction()
-    if(transaction == null) {
+    if(transaction == null && !shouldUseWriterConnection) {
       val connection = connectionPool.acquireReaderConnection()
       try {
         return execute(
@@ -428,20 +457,30 @@ public class AndroidxSqliteDriver(
         connectionPool.releaseReaderConnection(connection)
       }
     } else {
-      val connection = (transaction as Transaction).connection
-      return execute(
-        identifier = identifier,
-        connection = connection,
-        createStatement = { c ->
-          AndroidxQuery(
-            sql = sql,
-            statement = c.prepare(sql),
-            argCount = parameters,
-          )
-        },
-        binders = binders,
-        result = { executeQuery(mapper) },
-      )
+      val connection = when(transaction) {
+        null -> connectionPool.acquireWriterConnection()
+        else -> (transaction as Transaction).connection
+      }
+
+      try {
+        return execute(
+          identifier = identifier,
+          connection = connection,
+          createStatement = { c ->
+            AndroidxQuery(
+              sql = sql,
+              statement = c.prepare(sql),
+              argCount = parameters,
+            )
+          },
+          binders = binders,
+          result = { executeQuery(mapper) },
+        )
+      } finally {
+        if(transaction == null) {
+          connectionPool.releaseWriterConnection()
+        }
+      }
     }
   }
 

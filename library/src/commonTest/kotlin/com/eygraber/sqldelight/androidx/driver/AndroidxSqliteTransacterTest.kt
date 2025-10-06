@@ -341,11 +341,14 @@ private class FirstTransactionsFailConnectionPool : ConnectionPool {
   override fun close() {
     firstTransactionFailConnection.close()
   }
+
+  override val configuration = AndroidxSqliteConfiguration()
+
   override fun acquireWriterConnection() = firstTransactionFailConnection
   override fun releaseWriterConnection() {}
   override fun acquireReaderConnection() = firstTransactionFailConnection
   override fun releaseReaderConnection(connection: SQLiteConnection) {}
-  override fun setForeignKeyConstraintsEnabled(isForeignKeyConstraintsEnabled: Boolean) {}
   override fun setJournalMode(journalMode: SqliteJournalMode) {}
-  override fun setSync(sync: SqliteSync) {}
+  override fun updateForeignKeyConstraintsEnabled(isForeignKeyConstraintsEnabled: Boolean) {}
+  override fun updateSync(sync: SqliteSync) {}
 }
