@@ -3,16 +3,14 @@ package com.eygraber.sqldelight.androidx.driver
 import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.SQLiteDriver
 import androidx.sqlite.SQLiteStatement
-import androidx.sqlite.execSQL
 import app.cash.sqldelight.db.QueryResult
 import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteConcurrencyModel.MultipleReadersSingleWriter
 import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteConcurrencyModel.SingleReaderWriter
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-class ConnectionPoolTest {
+class AndroidxDriverConnectionPoolSetJournalModeTest {
   @Test
   fun `AndroidxDriverConnectionPool setJournalMode with WAL updates concurrency model`() {
     val testConnectionFactory = TestConnectionFactory()
@@ -209,58 +207,9 @@ class ConnectionPoolTest {
 
     // Verify that some connections were closed during the journal mode change
     assertTrue(
-      connectionsClosed > 0,
-      "Some reader connections should have been closed during journal mode change",
+      connectionsClosed == 2,
+      "All reader connections should have been closed during journal mode change",
     )
-
-    pool.close()
-  }
-
-  @Test
-  fun `PassthroughConnectionPool setJournalMode executes statement and checks foreign keys`() {
-    val testConnectionFactory = TestConnectionFactory()
-    val configuration = AndroidxSqliteConfiguration(
-      isForeignKeyConstraintsEnabled = true,
-    )
-
-    val pool = PassthroughConnectionPool(
-      connectionFactory = testConnectionFactory,
-      nameProvider = { "test.db" },
-      configuration = configuration,
-    )
-
-    val result = pool.setJournalMode { connection ->
-      QueryResult.Value("wal")
-    }
-
-    assertEquals("wal", result.value)
-
-    // Verify that at least one connection was created and used
-    assertTrue(testConnectionFactory.createdConnections.isNotEmpty(), "Should have created at least one connection")
-
-    pool.close()
-  }
-
-  @Test
-  fun `PassthroughConnectionPool setJournalMode returns correct result for different modes`() {
-    val testConnectionFactory = TestConnectionFactory()
-    val configuration = AndroidxSqliteConfiguration()
-
-    val pool = PassthroughConnectionPool(
-      connectionFactory = testConnectionFactory,
-      nameProvider = { "test.db" },
-      configuration = configuration,
-    )
-
-    val testJournalModes = listOf("WAL", "DELETE", "TRUNCATE", "MEMORY")
-
-    for(mode in testJournalModes) {
-      val result = pool.setJournalMode { connection ->
-        QueryResult.Value(mode)
-      }
-
-      assertEquals(mode, result.value, "Should return the correct journal mode: $mode")
-    }
 
     pool.close()
   }
@@ -285,169 +234,6 @@ class ConnectionPoolTest {
   @Test
   fun `SingleReaderWriter concurrency model is unaffected by WAL`() {
     assertEquals(0, SingleReaderWriter.readerCount, "SingleReaderWriter should always have 0 readers")
-  }
-
-  @Test
-  fun testPassthroughSetJournalModePreservesForeignKeyState() {
-    val factory = TestConnectionFactory()
-    val config = AndroidxSqliteConfiguration()
-    val pool = PassthroughConnectionPool(factory, { "test.db" }, config)
-
-    // Test with foreign keys enabled
-    val result = pool.setJournalMode { connection ->
-      // The connection passed here should be tracked
-      val testConn = connection as TestConnection
-      testConn.setPragmaResult("PRAGMA foreign_keys;", true)
-      // Test that we can use execSQL extension function
-      connection.execSQL("PRAGMA journal_mode = WAL;")
-      QueryResult.Value("wal")
-    }
-
-    assertEquals("wal", result.value)
-
-    // The connection should have been created during the setJournalMode call
-    assertTrue(factory.createdConnections.isNotEmpty(), "At least one connection should have been created")
-    val connection = factory.createdConnections.first()
-    val statements = connection.executedStatements
-    assertTrue(statements.contains("PREPARE: PRAGMA foreign_keys;"))
-  }
-
-  @Test
-  fun testPassthroughSetJournalModeWithForeignKeysDisabled() {
-    val factory = TestConnectionFactory()
-    val config = AndroidxSqliteConfiguration()
-    val pool = PassthroughConnectionPool(factory, { "test.db" }, config)
-
-    // Test with foreign keys disabled (default)
-    val result = pool.setJournalMode { connection ->
-      val testConn = connection as TestConnection
-      testConn.setPragmaResult("PRAGMA foreign_keys;", false)
-      connection.execSQL("PRAGMA journal_mode = DELETE;")
-      QueryResult.Value("delete")
-    }
-
-    assertEquals("delete", result.value)
-
-    assertTrue(factory.createdConnections.isNotEmpty(), "At least one connection should have been created")
-    val connection = factory.createdConnections.first()
-    val statements = connection.executedStatements
-    assertTrue(statements.contains("PREPARE: PRAGMA foreign_keys;"))
-  }
-
-  @Test
-  fun testAndroidxConnectionPoolSetJournalModeWithTimeout() {
-    val factory = TestConnectionFactory()
-    val config = AndroidxSqliteConfiguration(
-      concurrencyModel = MultipleReadersSingleWriter(isWal = false),
-    )
-
-    // Create pool but don't call setJournalMode directly to avoid hanging
-    // Instead test the logic indirectly by creating a similar scenario
-    val pool = AndroidxDriverConnectionPool(
-      connectionFactory = factory,
-      nameProvider = { "test.db" },
-      isFileBased = true,
-      configuration = config,
-    )
-
-    // Test that we can create the pool without hanging
-    // The pool creation should trigger connection creation
-    assertTrue(true, "Pool creation completed without hanging")
-
-    // Clean up
-    try {
-      pool.close()
-    } catch(_: Exception) {
-    }
-  }
-
-  @Test
-  fun testAndroidxConnectionPoolConcurrencyModelUpdate() {
-    // Test the concurrency model update logic that happens in setJournalMode
-    val initialModel = MultipleReadersSingleWriter(
-      isWal = false,
-      walCount = 4,
-      nonWalCount = 1,
-    )
-
-    // Simulate the logic that happens in setJournalMode
-    val result = "wal" // This would come from the executeStatement callback
-    val isWal = result.equals("wal", ignoreCase = true)
-    val updatedModel = initialModel.copy(isWal = isWal)
-
-    assertFalse(initialModel.isWal)
-    assertTrue(updatedModel.isWal)
-    assertEquals(4, updatedModel.readerCount) // Default reader count for WAL
-  }
-
-  @Test
-  fun testAndroidxConnectionPoolJournalModeResultHandling() {
-    // Test various journal mode results that setJournalMode might encounter
-    val testCases = listOf("wal", "WAL", "delete", "DELETE", "truncate", "memory")
-
-    testCases.forEach { result ->
-      val initialModel = MultipleReadersSingleWriter(
-        isWal = false,
-        walCount = 4,
-        nonWalCount = 1,
-      )
-      val isWal = result.equals("wal", ignoreCase = true)
-      val updatedModel = initialModel.copy(isWal = isWal)
-
-      if(result.lowercase() == "wal") {
-        assertTrue(updatedModel.isWal, "Should detect WAL mode for result: $result")
-      } else {
-        assertFalse(updatedModel.isWal, "Should not detect WAL mode for result: $result")
-      }
-    }
-  }
-
-  @Test
-  fun testAndroidxConnectionPoolWithSingleReaderWriter() {
-    // Test that SingleReaderWriter model doesn't change during setJournalMode
-    val model = SingleReaderWriter
-
-    // SingleReaderWriter should always have 0 readers regardless of journal mode
-    assertEquals(0, model.readerCount)
-
-    // The concurrency model update logic in setJournalMode only applies to MultipleReadersSingleWriter
-    // so SingleReaderWriter should remain unchanged
-    assertTrue(model === SingleReaderWriter) // Same instance
-  }
-
-  @Test
-  fun testConnectionPoolWithWriterConnection() {
-    val factory = TestConnectionFactory()
-    val config = AndroidxSqliteConfiguration()
-    val pool = PassthroughConnectionPool(factory, { "test.db" }, config)
-
-    // Test the withWriterConnection extension function
-    val result = pool.withWriterConnection {
-      // This should get us the delegated connection
-      "test result"
-    }
-
-    assertEquals("test result", result)
-    // Just verify that a connection was created, don't check statements since
-    // withWriterConnection doesn't execute any SQL
-    assertTrue(factory.createdConnections.isNotEmpty())
-  }
-
-  @Test
-  fun testSetJournalModeCallbackReceivesConnection() {
-    val factory = TestConnectionFactory()
-    val config = AndroidxSqliteConfiguration()
-    val pool = PassthroughConnectionPool(factory, { "test.db" }, config)
-
-    var callbackConnection: SQLiteConnection? = null
-
-    pool.setJournalMode { connection ->
-      callbackConnection = connection
-      QueryResult.Value("test")
-    }
-
-    assertTrue(callbackConnection != null)
-    assertTrue(callbackConnection is TestConnection)
   }
 }
 
