@@ -19,14 +19,15 @@ abstract class AndroidxSqliteTransacterTest {
   private lateinit var transacter: TransacterImpl
   private lateinit var driver: SqlDriver
 
+  @Suppress("VisibleForTests")
   private fun setupDatabase(
     schema: SqlSchema<QueryResult.Value<Unit>>,
     connectionPool: ConnectionPool? = null,
   ): SqlDriver = AndroidxSqliteDriver(
-    driver = androidxSqliteTestDriver(),
+    connectionFactory = androidxSqliteTestConnectionFactory(),
     databaseType = AndroidxSqliteDatabaseType.Memory,
     schema = schema,
-    connectionPool = connectionPool,
+    overridingConnectionPool = connectionPool,
   )
 
   @BeforeTest
@@ -342,13 +343,11 @@ private class FirstTransactionsFailConnectionPool : ConnectionPool {
     firstTransactionFailConnection.close()
   }
 
-  override val configuration = AndroidxSqliteConfiguration()
-
   override fun acquireWriterConnection() = firstTransactionFailConnection
   override fun releaseWriterConnection() {}
   override fun acquireReaderConnection() = firstTransactionFailConnection
   override fun releaseReaderConnection(connection: SQLiteConnection) {}
-  override fun setJournalMode(journalMode: SqliteJournalMode) {}
-  override fun updateForeignKeyConstraintsEnabled(isForeignKeyConstraintsEnabled: Boolean) {}
-  override fun updateSync(sync: SqliteSync) {}
+  override fun <R> setJournalMode(
+    executeStatement: (SQLiteConnection) -> QueryResult.Value<R>,
+  ): QueryResult.Value<R> = error("Don't use")
 }

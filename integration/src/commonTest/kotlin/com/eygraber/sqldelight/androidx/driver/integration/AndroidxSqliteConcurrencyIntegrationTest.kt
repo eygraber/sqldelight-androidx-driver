@@ -1,6 +1,7 @@
 package com.eygraber.sqldelight.androidx.driver.integration
 
 import app.cash.sqldelight.coroutines.asFlow
+import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteConcurrencyModel.MultipleReadersSingleWriter
 import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteConfiguration
 import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteDatabaseType
 import kotlinx.coroutines.delay
@@ -23,7 +24,10 @@ class AndroidxSqliteConcurrencyIntegrationTest : AndroidxSqliteIntegrationTest()
     // having 2 readers instead of the default 4 makes it more
     // likely to have concurrent readers using the same cached statement
     configuration = AndroidxSqliteConfiguration(
-      readerConnectionsCount = 2,
+      concurrencyModel = MultipleReadersSingleWriter(
+        isWal = true,
+        walCount = 2,
+      ),
     )
 
     launch {

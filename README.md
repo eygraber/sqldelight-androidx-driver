@@ -110,39 +110,166 @@ have been introduced during the migration.
 
 ## Connection Pooling
 
-By default, one connection will be used for both reading and writing, and only one thread can acquire that connection 
-at a time. If you have WAL enabled, you could (and should) set the amount of pooled reader connections that will be used:
+SQLite supports several concurrency models that can significantly impact your application's performance. This driver
+provides flexible connection pooling through the `AndroidxSqliteConcurrencyModel` interface.
+
+### Available Concurrency Models
+
+#### 1. SingleReaderWriter
+
+The simplest model with one connection handling all operations:
 
 ```kotlin
-AndroidxSqliteDriver(
-  ...,
-  readerConnections = 4,
-  ...,
+AndroidxSqliteConfiguration(
+  concurrencyModel = AndroidxSqliteConcurrencyModel.SingleReaderWriter
 )
 ```
 
-On Android you can defer to the system to determine how many reader connections there should be<sup>[1]</sup>:
+**Best for:**
+
+- Simple applications with minimal database usage
+- Testing and development
+- When memory usage is a primary concern
+- Single-threaded applications
+
+#### 2. MultipleReaders
+
+Dedicated reader connections for read-only access:
+
+```kotlin
+AndroidxSqliteConfiguration(
+  concurrencyModel = AndroidxSqliteConcurrencyModel.MultipleReaders(
+    readerCount = 3  // Number of concurrent reader connections
+  )
+)
+```
+
+**Best for:**
+
+- Read-only applications (analytics dashboards, reporting tools)
+- Data visualization and content browsing applications
+- Scenarios where all writes happen externally (data imports, ETL processes)
+- Applications that only query pre-populated databases
+
+**Important:** This model is designed for **read-only access**. No write operations (INSERT, UPDATE, DELETE) should be
+performed. If you need write capabilities, use `MultipleReadersSingleWriter` in WAL mode instead.
+
+#### 3. MultipleReadersSingleWriter (Recommended)
+
+The most flexible model that adapts based on journal mode:
+
+```kotlin
+AndroidxSqliteConfiguration(
+  concurrencyModel = AndroidxSqliteConcurrencyModel.MultipleReadersSingleWriter(
+    isWal = true,        // Enable WAL mode for true concurrency
+    walCount = 4,        // Reader connections when WAL is enabled
+    nonWalCount = 0      // Reader connections when WAL is disabled
+  )
+)
+```
+
+**Best for:**
+
+- Most production applications
+- Mixed read/write workloads
+- When you want to leverage WAL mode benefits
+- Applications requiring optimal performance
+
+### WAL Mode Benefits
+
+- **True Concurrency**: Readers and writers don't block each other
+- **Better Performance**: Concurrent operations improve throughput
+- **Consistency**: ACID properties are maintained (when `PRAGMA synchronous = FULL` is used)
+- **Scalability**: Handles higher concurrent load
+
+### Choosing Reader Connection Count
+
+The optimal number of reader connections depends on your use case:
+
+```kotlin
+// Conservative (default)
+AndroidxSqliteConcurrencyModel.MultipleReadersSingleWriter(
+  isWal = true,
+  walCount = 4,
+  nonWalCount = 0,
+)
+
+// High-concurrency applications
+AndroidxSqliteConcurrencyModel.MultipleReadersSingleWriter(
+  isWal = true, 
+  walCount = 8
+)
+
+// Memory-conscious applications
+AndroidxSqliteConcurrencyModel.MultipleReadersSingleWriter(
+  isWal = true,
+  walCount = 2
+)
+```
+
+### Platform-Specific Configuration
+
+On Android, you can use system-determined connection pool sizes:
 
 ```kotlin
 // Based on SQLiteGlobal.getWALConnectionPoolSize()
-fun getWALConnectionPoolSize() {
+fun getWALConnectionPoolSize(): Int {
   val resources = Resources.getSystem()
-  val resId =
-    resources.getIdentifier("db_connection_pool_size", "integer", "android")
+  val resId = resources.getIdentifier("db_connection_pool_size", "integer", "android")
   return if (resId != 0) {
     resources.getInteger(resId)
   } else {
-    2
+    2  // Fallback default
   }
 }
+
+AndroidxSqliteConfiguration(
+  concurrencyModel = AndroidxSqliteConcurrencyModel.MultipleReadersSingleWriter(
+    isWal = true,
+    walCount = getWALConnectionPoolSize(),
+    nonWalCount = 0,
+  )
+)
 ```
+
+### Performance Considerations
+
+| Model                                 | Memory Usage | Read Concurrency | Write Capability | Best Use Case      |
+|---------------------------------------|--------------|------------------|------------------|--------------------|
+| SingleReaderWriter                    | Lowest       | None             | Full             | Simple apps        |
+| MultipleReaders                       | Medium       | Excellent        | None (read-only) | Read-only apps     |
+| MultipleReadersSingleWriter (WAL)     | Higher       | Excellent        | Full             | Production         |
+| MultipleReadersSingleWriter (non-WAL) | Medium       | Limited          | Full             | Legacy/constrained |
+
+### Special Database Types
+
+> [!NOTE]  
+> In-Memory and temporary databases automatically use `SingleReaderWriter` model regardless of configuration, as
+> connection pooling provides no benefit for these database types.
+
+### Journal Mode
+
+If `PRAGMA journal_mode = ...` is used, the connection pool will:
+
+1. Acquire the writer connection
+2. Acquire all reader connections
+3. Close all reader connections
+4. Run the `PRAGMA` statement
+5. Recreate the reader connections
+
+This ensures all connections use the same journal mode and prevents inconsistencies.
+
+### Best Practices
+
+1. **Start with defaults**: Uses `MultipleReadersSingleWriter` in WAL mode
+2. **Monitor performance**: Profile your specific workload to determine optimal reader count
+3. **Consider memory**: Each connection has overhead - balance performance vs memory usage
+4. **Test thoroughly**: Verify your concurrency model works under expected load
+5. **Platform differences**: Android may have different optimal settings than JVM/Native
 
 See [WAL & Dispatchers] for more information about how to configure dispatchers to use for reads and writes.
 
-> [!NOTE]  
-> In-Memory and temporary databases will always use 0 reader connections i.e. there will be a single connection 
-
-[1]: https://blog.p-y.wtf/parallelism-with-android-sqlite#heading-secondary-connections
 [AndroidX Kotlin Multiplatform SQLite]: https://developer.android.com/kotlin/multiplatform/sqlite
 [SQLDelight]: https://github.com/sqldelight/sqldelight
 [WAL & Dispatchers]: https://blog.p-y.wtf/parallelism-with-android-sqlite#heading-wal-amp-dispatchers
+[Write-Ahead Logging]: https://sqlite.org/wal.html

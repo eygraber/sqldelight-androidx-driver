@@ -1,24 +1,21 @@
 package com.eygraber.sqldelight.androidx.driver
 
+import androidx.annotation.VisibleForTesting
+import androidx.annotation.VisibleForTesting.Companion.PRIVATE
 import androidx.collection.LruCache
 import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.SQLiteDriver
-import androidx.sqlite.SQLiteStatement
-import androidx.sqlite.execSQL
 import app.cash.sqldelight.Query
 import app.cash.sqldelight.Transacter
-import app.cash.sqldelight.TransacterImpl
 import app.cash.sqldelight.db.AfterVersion
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlCursor
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.db.SqlPreparedStatement
 import app.cash.sqldelight.db.SqlSchema
-import kotlinx.atomicfu.atomic
 import kotlinx.atomicfu.locks.ReentrantLock
 import kotlinx.atomicfu.locks.SynchronizedObject
 import kotlinx.atomicfu.locks.synchronized
-import kotlinx.atomicfu.locks.withLock
 
 internal expect class TransactionsThreadLocal() {
   internal fun get(): Transacter.Transaction?
@@ -33,7 +30,7 @@ internal expect class TransactionsThreadLocal() {
  * @see SqlSchema.create
  * @see SqlSchema.migrate
  */
-public class AndroidxSqliteDriver(
+public class AndroidxSqliteDriver @VisibleForTesting(otherwise = PRIVATE) internal constructor(
   connectionFactory: AndroidxSqliteConnectionFactory,
   databaseType: AndroidxSqliteDatabaseType,
   private val schema: SqlSchema<QueryResult.Value<Unit>>,
@@ -50,16 +47,89 @@ public class AndroidxSqliteDriver(
    * **Warning:** The [AndroidxSqliteConfigurableDriver] receiver is ephemeral and **must not** escape the callback.
    */
   private val onConfigure: AndroidxSqliteConfigurableDriver.() -> Unit = {},
-  private val onCreate: AndroidxSqliteDriver.() -> Unit = {},
-  private val onUpdate: AndroidxSqliteDriver.(Long, Long) -> Unit = { _, _ -> },
-  private val onOpen: AndroidxSqliteDriver.() -> Unit = {},
-  isConnectionPoolProvidedByDriver: Boolean = connectionFactory.driver.hasConnectionPool,
   /**
-   * This [ConnectionPool] will be used even if [isConnectionPoolProvidedByDriver] is `true`
+   * A callback invoked when the database is created for the first time.
+   *
+   * This lambda is invoked after the schema has been created but before `onOpen` is called.
+   *
+   * **Warning:** The [SqlDriver] receiver **must not** escape the callback.
    */
-  connectionPool: ConnectionPool? = null,
+  private val onCreate: SqlDriver.() -> Unit = {},
+  /**
+   * A callback invoked when the database is upgraded.
+   *
+   * This lambda is invoked after the schema has been migrated but before `onOpen` is called.
+   *
+   * **Warning:** The [SqlDriver] receiver **must not** escape the callback.
+   */
+  private val onUpdate: SqlDriver.(Long, Long) -> Unit = { _, _ -> },
+  /**
+   * A callback invoked when the database has been opened.
+   *
+   * This lambda is invoked after the schema has been created or migrated.
+   *
+   * **Warning:** The [SqlDriver] receiver **must not** escape the callback.
+   */
+  private val onOpen: SqlDriver.() -> Unit = {},
+  overridingConnectionPool: ConnectionPool? = null,
   vararg migrationCallbacks: AfterVersion,
 ) : SqlDriver {
+  public constructor(
+    connectionFactory: AndroidxSqliteConnectionFactory,
+    databaseType: AndroidxSqliteDatabaseType,
+    schema: SqlSchema<QueryResult.Value<Unit>>,
+    configuration: AndroidxSqliteConfiguration = AndroidxSqliteConfiguration(),
+    migrateEmptySchema: Boolean = false,
+    /**
+     * A callback to configure the database connection when it's first opened.
+     *
+     * This lambda is invoked on the first interaction with the database, immediately before the schema
+     * is created or migrated. It provides an [AndroidxSqliteConfigurableDriver] as its receiver
+     * to allow for safe configuration of connection properties like journal mode or foreign key
+     * constraints.
+     *
+     * **Warning:** The [AndroidxSqliteConfigurableDriver] receiver is ephemeral and **must not** escape the callback.
+     */
+    onConfigure: AndroidxSqliteConfigurableDriver.() -> Unit = {},
+    /**
+     * A callback invoked when the database is created for the first time.
+     *
+     * This lambda is invoked after the schema has been created but before `onOpen` is called.
+     *
+     * **Warning:** The [SqlDriver] receiver **must not** escape the callback.
+     */
+    onCreate: SqlDriver.() -> Unit = {},
+    /**
+     * A callback invoked when the database is upgraded.
+     *
+     * This lambda is invoked after the schema has been migrated but before `onOpen` is called.
+     *
+     * **Warning:** The [SqlDriver] receiver **must not** escape the callback.
+     */
+    onUpdate: SqlDriver.(Long, Long) -> Unit = { _, _ -> },
+    /**
+     * A callback invoked when the database has been opened.
+     *
+     * This lambda is invoked after the schema has been created or migrated.
+     *
+     * **Warning:** The [SqlDriver] receiver **must not** escape the callback.
+     */
+    onOpen: SqlDriver.() -> Unit = {},
+    vararg migrationCallbacks: AfterVersion,
+  ) : this(
+    connectionFactory = connectionFactory,
+    databaseType = databaseType,
+    schema = schema,
+    configuration = configuration,
+    migrateEmptySchema = migrateEmptySchema,
+    onConfigure = onConfigure,
+    onCreate = onCreate,
+    onUpdate = onUpdate,
+    onOpen = onOpen,
+    overridingConnectionPool = null,
+    migrationCallbacks = migrationCallbacks,
+  )
+
   public constructor(
     driver: SQLiteDriver,
     databaseType: AndroidxSqliteDatabaseType,
@@ -77,13 +147,30 @@ public class AndroidxSqliteDriver(
      * **Warning:** The [AndroidxSqliteConfigurableDriver] receiver is ephemeral and **must not** escape the callback.
      */
     onConfigure: AndroidxSqliteConfigurableDriver.() -> Unit = {},
-    onCreate: SqlDriver.() -> Unit = {},
-    onUpdate: SqlDriver.(Long, Long) -> Unit = { _, _ -> },
-    onOpen: SqlDriver.() -> Unit = {},
     /**
-     * This [ConnectionPool] will be used even if [SQLiteDriver.hasConnectionPool] is `true`
+     * A callback invoked when the database is created for the first time.
+     *
+     * This lambda is invoked after the schema has been created but before `onOpen` is called.
+     *
+     * **Warning:** The [SqlDriver] receiver **must not** escape the callback.
      */
-    connectionPool: ConnectionPool? = null,
+    onCreate: SqlDriver.() -> Unit = {},
+    /**
+     * A callback invoked when the database is upgraded.
+     *
+     * This lambda is invoked after the schema has been migrated but before `onOpen` is called.
+     *
+     * **Warning:** The [SqlDriver] receiver **must not** escape the callback.
+     */
+    onUpdate: SqlDriver.(Long, Long) -> Unit = { _, _ -> },
+    /**
+     * A callback invoked when the database has been opened.
+     *
+     * This lambda is invoked after the schema has been created or migrated.
+     *
+     * **Warning:** The [SqlDriver] receiver **must not** escape the callback.
+     */
+    onOpen: SqlDriver.() -> Unit = {},
     vararg migrationCallbacks: AfterVersion,
   ) : this(
     connectionFactory = DefaultAndroidxSqliteConnectionFactory(driver),
@@ -95,8 +182,7 @@ public class AndroidxSqliteDriver(
     onCreate = onCreate,
     onUpdate = onUpdate,
     onOpen = onOpen,
-    isConnectionPoolProvidedByDriver = driver.hasConnectionPool,
-    connectionPool = connectionPool,
+    overridingConnectionPool = null,
     migrationCallbacks = migrationCallbacks,
   )
 
@@ -121,11 +207,6 @@ public class AndroidxSqliteDriver(
     message: String,
   ) : Exception(message)
 
-  @Suppress("NonBooleanPropertyPrefixedWithIs")
-  private val isFirstInteraction = atomic(true)
-
-  private val configuration get() = connectionPool.configuration
-
   private val connectionPool by lazy {
     val nameProvider = when(databaseType) {
       is AndroidxSqliteDatabaseType.File -> databaseType::databaseFilePath
@@ -141,8 +222,8 @@ public class AndroidxSqliteDriver(
       }
     }
 
-    connectionPool ?: when {
-      isConnectionPoolProvidedByDriver ->
+    overridingConnectionPool ?: when {
+      connectionFactory.driver.hasConnectionPool ->
         PassthroughConnectionPool(
           connectionFactory = connectionFactory,
           nameProvider = nameProvider,
@@ -169,36 +250,32 @@ public class AndroidxSqliteDriver(
   private val statementsCache = HashMap<SQLiteConnection, LruCache<Int, AndroidxStatement>>()
   private val statementsCacheLock = ReentrantLock()
 
-  private fun getStatementCache(connection: SQLiteConnection) =
-    statementsCacheLock.withLock {
-      when {
-        configuration.cacheSize > 0 ->
-          statementsCache.getOrPut(connection) {
-            object : LruCache<Int, AndroidxStatement>(configuration.cacheSize) {
-              override fun entryRemoved(
-                evicted: Boolean,
-                key: Int,
-                oldValue: AndroidxStatement,
-                newValue: AndroidxStatement?,
-              ) {
-                if(evicted) oldValue.close()
-              }
-            }
-          }
-
-        else -> null
-      }
-    }
-
-  private var skipStatementsCache = true
-
   private val listenersLock = SynchronizedObject()
   private val listeners = linkedMapOf<String, MutableSet<Query.Listener>>()
 
-  private val migrationCallbacks = migrationCallbacks
+  private val executingDriverHolder by lazy {
+    @Suppress("ktlint:standard:max-line-length")
+    AndroidxSqliteDriverHolder(
+      connectionPool = this.connectionPool,
+      statementCache = statementsCache,
+      statementCacheLock = statementsCacheLock,
+      statementCacheSize = configuration.cacheSize,
+      transactions = transactions,
+      schema = schema,
+      isForeignKeyConstraintsEnabled = configuration.isForeignKeyConstraintsEnabled,
+      isForeignKeyConstraintsCheckedAfterCreateOrUpdate = configuration.isForeignKeyConstraintsCheckedAfterCreateOrUpdate,
+      maxMigrationForeignKeyConstraintViolationsToReport = configuration.maxMigrationForeignKeyConstraintViolationsToReport,
+      migrateEmptySchema = migrateEmptySchema,
+      onConfigure = onConfigure,
+      onCreate = onCreate,
+      onUpdate = onUpdate,
+      onOpen = onOpen,
+      migrationCallbacks = migrationCallbacks,
+    )
+  }
 
   /**
-   * Journal mode to use.
+   * Set the [SqliteJournalMode] to use.
    *
    * This function will block until pending schema creation/migration is completed,
    * and all created connections have been updated.
@@ -215,14 +292,22 @@ public class AndroidxSqliteDriver(
       "setJournalMode cannot be called from within a transaction"
     }
 
-    // run creation or migration if needed before setting the journal mode
-    createOrMigrateIfNeeded()
-
-    connectionPool.setJournalMode(journalMode)
+    executingDriverHolder.ensureSchemaIsReady {
+      execute(
+        identifier = null,
+        sql = "PRAGMA journal_mode = ${journalMode.value};",
+        parameters = 0,
+        binders = null,
+      )
+    }
   }
 
   /**
-   * This function will block until executed on the writer connection.
+   * Set whether foreign keys are enabled / disabled on the write connection.
+   *
+   * This function will block until pending schema creation/migration is completed.
+   *
+   * Note that foreign keys are always disabled during schema creation/migration.
    *
    * An exception will be thrown if this is called from within a transaction.
    */
@@ -230,8 +315,6 @@ public class AndroidxSqliteDriver(
     check(currentTransaction() == null) {
       "setForeignKeyConstraintsEnabled cannot be called from within a transaction"
     }
-
-    connectionPool.updateForeignKeyConstraintsEnabled(isForeignKeyConstraintsEnabled)
 
     val foreignKeys = if(isForeignKeyConstraintsEnabled) "ON" else "OFF"
     execute(
@@ -243,7 +326,14 @@ public class AndroidxSqliteDriver(
   }
 
   /**
-   * This function will block until executed on the writer connection.
+   * Set the [SqliteSync] to use for the write connection.
+   *
+   * This function will block until pending schema creation/migration is completed.
+   *
+   * Note that this means that this [SqliteSync] **will not** be used for schema creation/migration.
+   *
+   * Please use [AndroidxSqliteConfiguration] or [onConfigure] if a specific [SqliteSync] is needed
+   * during schema creation/migration.
    *
    * An exception will be thrown if this is called from within a transaction.
    */
@@ -251,8 +341,6 @@ public class AndroidxSqliteDriver(
     check(currentTransaction() == null) {
       "setSync cannot be called from within a transaction"
     }
-
-    connectionPool.updateSync(sync)
 
     execute(
       identifier = null,
@@ -286,139 +374,25 @@ public class AndroidxSqliteDriver(
     listenersToNotify.forEach(Query.Listener::queryResultsChanged)
   }
 
-  override fun newTransaction(): QueryResult<Transacter.Transaction> {
-    createOrMigrateIfNeeded()
-
-    val enclosing = transactions.get()
-    val transactionConnection = when(enclosing) {
-      null -> connectionPool.acquireWriterConnection()
-      else -> (enclosing as Transaction).connection
-    }
-    val transaction = Transaction(enclosing, transactionConnection)
-    if(enclosing == null) {
-      transactionConnection.execSQL("BEGIN IMMEDIATE")
+  override fun newTransaction(): QueryResult<Transacter.Transaction> =
+    executingDriverHolder.ensureSchemaIsReady {
+      newTransaction()
     }
 
-    transactions.set(transaction)
-
-    return QueryResult.Value(transaction)
-  }
-
-  override fun currentTransaction(): Transacter.Transaction? = transactions.get()
-
-  private inner class Transaction(
-    override val enclosingTransaction: Transacter.Transaction?,
-    val connection: SQLiteConnection,
-  ) : Transacter.Transaction() {
-    override fun endTransaction(successful: Boolean): QueryResult<Unit> {
-      if(enclosingTransaction == null) {
-        try {
-          if(successful) {
-            connection.execSQL("COMMIT")
-          } else {
-            connection.execSQL("ROLLBACK")
-          }
-        } finally {
-          connectionPool.releaseWriterConnection()
-        }
-      }
-      transactions.set(enclosingTransaction)
-      return QueryResult.Unit
+  override fun currentTransaction(): Transacter.Transaction? =
+    executingDriverHolder.ensureSchemaIsReady {
+      currentTransaction()
     }
-  }
-
-  private fun <T> execute(
-    identifier: Int?,
-    connection: SQLiteConnection,
-    createStatement: (SQLiteConnection) -> AndroidxStatement,
-    binders: (SqlPreparedStatement.() -> Unit)?,
-    result: AndroidxStatement.() -> T,
-  ): QueryResult.Value<T> {
-    val statementsCache = if(!skipStatementsCache) getStatementCache(connection) else null
-    var statement: AndroidxStatement? = null
-    if(identifier != null && statementsCache != null) {
-      // remove temporarily from the cache if present
-      statement = statementsCache.remove(identifier)
-    }
-    if(statement == null) {
-      statement = createStatement(connection)
-    }
-    try {
-      if(binders != null) {
-        statement.binders()
-      }
-      return QueryResult.Value(statement.result())
-    } finally {
-      if(identifier != null && !skipStatementsCache) {
-        statement.reset()
-
-        // put the statement back in the cache
-        // closing any statement with this identifier
-        // that was put into the cache while we used this one
-        statementsCache?.put(identifier, statement)?.close()
-      } else {
-        statement.close()
-      }
-    }
-  }
 
   override fun execute(
     identifier: Int?,
     sql: String,
     parameters: Int,
     binders: (SqlPreparedStatement.() -> Unit)?,
-  ): QueryResult<Long> {
-    createOrMigrateIfNeeded()
-
-    fun SQLiteConnection.getTotalChangedRows() =
-      prepare("SELECT changes()").use { statement ->
-        when {
-          statement.step() -> statement.getLong(0)
-          else -> 0
-        }
-      }
-
-    val transaction = currentTransaction()
-    if(transaction == null) {
-      val writerConnection = connectionPool.acquireWriterConnection()
-      try {
-        return execute(
-          identifier = identifier,
-          connection = writerConnection,
-          createStatement = { c ->
-            AndroidxPreparedStatement(
-              sql = sql,
-              statement = c.prepare(sql),
-            )
-          },
-          binders = binders,
-          result = {
-            execute()
-            writerConnection.getTotalChangedRows()
-          },
-        )
-      } finally {
-        connectionPool.releaseWriterConnection()
-      }
-    } else {
-      val connection = (transaction as Transaction).connection
-      return execute(
-        identifier = identifier,
-        connection = connection,
-        createStatement = { c ->
-          AndroidxPreparedStatement(
-            sql = sql,
-            statement = c.prepare(sql),
-          )
-        },
-        binders = binders,
-        result = {
-          execute()
-          connection.getTotalChangedRows()
-        },
-      )
+  ): QueryResult<Long> =
+    executingDriverHolder.ensureSchemaIsReady {
+      execute(identifier, sql, parameters, binders)
     }
-  }
 
   override fun <R> executeQuery(
     identifier: Int?,
@@ -426,63 +400,10 @@ public class AndroidxSqliteDriver(
     mapper: (SqlCursor) -> QueryResult<R>,
     parameters: Int,
     binders: (SqlPreparedStatement.() -> Unit)?,
-  ): QueryResult.Value<R> {
-    createOrMigrateIfNeeded()
-
-    // PRAGMA foreign_keys and synchronous should always be queried from the writer connection
-    // since these are per-connection settings and only the writer connection has them set
-    val shouldUseWriterConnection = sql.trim().run {
-      startsWith("PRAGMA foreign_keys", ignoreCase = true) ||
-        startsWith("PRAGMA synchronous", ignoreCase = true)
+  ): QueryResult<R> =
+    executingDriverHolder.ensureSchemaIsReady {
+      executeQuery(identifier, sql, mapper, parameters, binders)
     }
-
-    val transaction = currentTransaction()
-    if(transaction == null && !shouldUseWriterConnection) {
-      val connection = connectionPool.acquireReaderConnection()
-      try {
-        return execute(
-          identifier = identifier,
-          connection = connection,
-          createStatement = { c ->
-            AndroidxQuery(
-              sql = sql,
-              statement = c.prepare(sql),
-              argCount = parameters,
-            )
-          },
-          binders = binders,
-          result = { executeQuery(mapper) },
-        )
-      } finally {
-        connectionPool.releaseReaderConnection(connection)
-      }
-    } else {
-      val connection = when(transaction) {
-        null -> connectionPool.acquireWriterConnection()
-        else -> (transaction as Transaction).connection
-      }
-
-      try {
-        return execute(
-          identifier = identifier,
-          connection = connection,
-          createStatement = { c ->
-            AndroidxQuery(
-              sql = sql,
-              statement = c.prepare(sql),
-              argCount = parameters,
-            )
-          },
-          binders = binders,
-          result = { executeQuery(mapper) },
-        )
-      } finally {
-        if(transaction == null) {
-          connectionPool.releaseWriterConnection()
-        }
-      }
-    }
-  }
 
   /**
    * It is the caller's responsibility to ensure that no threads
@@ -493,266 +414,4 @@ public class AndroidxSqliteDriver(
     statementsCache.clear()
     connectionPool.close()
   }
-
-  private val createOrMigrateLock = SynchronizedObject()
-  private var isNestedUnderCreateOrMigrate = false
-  private fun createOrMigrateIfNeeded() {
-    if(isFirstInteraction.value) {
-      synchronized(createOrMigrateLock) {
-        if(isFirstInteraction.value && !isNestedUnderCreateOrMigrate) {
-          isNestedUnderCreateOrMigrate = true
-
-          AndroidxSqliteConfigurableDriver(this).onConfigure()
-
-          val writerConnection = connectionPool.acquireWriterConnection()
-          val currentVersion = try {
-            writerConnection.prepare("PRAGMA user_version").use { getVersion ->
-              when {
-                getVersion.step() -> getVersion.getLong(0)
-                else -> 0
-              }
-            }
-          } finally {
-            connectionPool.releaseWriterConnection()
-          }
-
-          val isCreate = currentVersion == 0L && !migrateEmptySchema
-          if(isCreate || currentVersion < schema.version) {
-            val driver = this
-            val transacter = object : TransacterImpl(driver) {}
-
-            try {
-              // It's a little gross that we use writerConnection here after releasing it above
-              // but ultimately it's the best way forward for now, since acquiring the writer connection
-              // isn't re-entrant, and create/migrate will likely try to acquire the writer connection at some point.
-              // There **should** only be one active thread throughout this process, so it **should** be safe...
-              writerConnection.withForeignKeysDisabled(configuration) {
-                transacter.transaction {
-                  when {
-                    isCreate -> schema.create(driver).value
-                    else -> schema.migrate(driver, currentVersion, schema.version, *migrationCallbacks).value
-                  }
-
-                  if(configuration.isForeignKeyConstraintsCheckedAfterCreateOrUpdate) {
-                    writerConnection.reportForeignKeyViolations(
-                      configuration.maxMigrationForeignKeyConstraintViolationsToReport,
-                    )
-                  }
-
-                  writerConnection.execSQL("PRAGMA user_version = ${schema.version}")
-                }
-              }
-            }
-            finally {
-              skipStatementsCache = configuration.cacheSize == 0
-            }
-
-            when {
-              isCreate -> onCreate()
-              else -> onUpdate(currentVersion, schema.version)
-            }
-          } else {
-            skipStatementsCache = configuration.cacheSize == 0
-          }
-
-          onOpen()
-
-          isFirstInteraction.value = false
-        }
-      }
-    }
-  }
-}
-
-private inline fun SQLiteConnection.withForeignKeysDisabled(
-  configuration: AndroidxSqliteConfiguration,
-  crossinline block: () -> Unit,
-) {
-  if(configuration.isForeignKeyConstraintsEnabled) {
-    execSQL("PRAGMA foreign_keys = OFF;")
-  }
-
-  try {
-    block()
-
-    if(configuration.isForeignKeyConstraintsEnabled) {
-      execSQL("PRAGMA foreign_keys = ON;")
-    }
-  } catch(e: Throwable) {
-    // An exception happened during creation / migration.
-    // We will try to re-enable foreign keys, and if that also fails,
-    // we will add it as a suppressed exception to the original one.
-    try {
-      if(configuration.isForeignKeyConstraintsEnabled) {
-        execSQL("PRAGMA foreign_keys = ON;")
-      }
-    } catch(fkException: Throwable) {
-      e.addSuppressed(fkException)
-    }
-    throw e
-  }
-}
-
-private fun SQLiteConnection.reportForeignKeyViolations(
-  maxMigrationForeignKeyConstraintViolationsToReport: Int,
-) {
-  prepare("PRAGMA foreign_key_check;").use { check ->
-    val violations = mutableListOf<AndroidxSqliteDriver.ForeignKeyConstraintViolation>()
-    var count = 0
-    while(check.step() && count++ < maxMigrationForeignKeyConstraintViolationsToReport) {
-      violations.add(
-        AndroidxSqliteDriver.ForeignKeyConstraintViolation(
-          referencingTable = check.getText(0),
-          referencingRowId = check.getInt(1),
-          referencedTable = check.getText(2),
-          referencingConstraintIndex = check.getInt(3),
-        ),
-      )
-    }
-
-    if(violations.isNotEmpty()) {
-      val unprintedViolationsCount = violations.size - 5
-      val unprintedDisclaimer = if(unprintedViolationsCount > 0) " ($unprintedViolationsCount not shown)" else ""
-
-      throw AndroidxSqliteDriver.ForeignKeyConstraintCheckException(
-        violations = violations,
-        message = """
-            |The following foreign key constraints are violated$unprintedDisclaimer:
-            |
-            |${violations.take(5).joinToString(separator = "\n\n")}
-        """.trimMargin(),
-      )
-    }
-  }
-}
-
-internal interface AndroidxStatement : SqlPreparedStatement {
-  fun execute()
-  fun <R> executeQuery(mapper: (SqlCursor) -> QueryResult<R>): R
-  fun reset()
-  fun close()
-}
-
-private class AndroidxPreparedStatement(
-  private val sql: String,
-  private val statement: SQLiteStatement,
-) : AndroidxStatement {
-  override fun bindBytes(index: Int, bytes: ByteArray?) {
-    if(bytes == null) statement.bindNull(index + 1) else statement.bindBlob(index + 1, bytes)
-  }
-
-  override fun bindLong(index: Int, long: Long?) {
-    if(long == null) statement.bindNull(index + 1) else statement.bindLong(index + 1, long)
-  }
-
-  override fun bindDouble(index: Int, double: Double?) {
-    if(double == null) statement.bindNull(index + 1) else statement.bindDouble(index + 1, double)
-  }
-
-  override fun bindString(index: Int, string: String?) {
-    if(string == null) statement.bindNull(index + 1) else statement.bindText(index + 1, string)
-  }
-
-  override fun bindBoolean(index: Int, boolean: Boolean?) {
-    if(boolean == null) {
-      statement.bindNull(index + 1)
-    } else {
-      statement.bindLong(index + 1, if(boolean) 1L else 0L)
-    }
-  }
-
-  override fun <R> executeQuery(mapper: (SqlCursor) -> QueryResult<R>): R =
-    throw UnsupportedOperationException()
-
-  override fun execute() {
-    var cont = true
-    while(cont) {
-      cont = statement.step()
-    }
-  }
-
-  override fun toString() = sql
-
-  override fun reset() {
-    statement.reset()
-  }
-
-  override fun close() {
-    statement.close()
-  }
-}
-
-private class AndroidxQuery(
-  private val sql: String,
-  private val statement: SQLiteStatement,
-  argCount: Int,
-) : AndroidxStatement {
-  private val binds = MutableList<((SQLiteStatement) -> Unit)?>(argCount) { null }
-
-  override fun bindBytes(index: Int, bytes: ByteArray?) {
-    binds[index] = { if(bytes == null) it.bindNull(index + 1) else it.bindBlob(index + 1, bytes) }
-  }
-
-  override fun bindLong(index: Int, long: Long?) {
-    binds[index] = { if(long == null) it.bindNull(index + 1) else it.bindLong(index + 1, long) }
-  }
-
-  override fun bindDouble(index: Int, double: Double?) {
-    binds[index] =
-      { if(double == null) it.bindNull(index + 1) else it.bindDouble(index + 1, double) }
-  }
-
-  override fun bindString(index: Int, string: String?) {
-    binds[index] =
-      { if(string == null) it.bindNull(index + 1) else it.bindText(index + 1, string) }
-  }
-
-  override fun bindBoolean(index: Int, boolean: Boolean?) {
-    binds[index] = { statement ->
-      if(boolean == null) {
-        statement.bindNull(index + 1)
-      } else {
-        statement.bindLong(index + 1, if(boolean) 1L else 0L)
-      }
-    }
-  }
-
-  override fun execute() = throw UnsupportedOperationException()
-
-  override fun <R> executeQuery(mapper: (SqlCursor) -> QueryResult<R>): R {
-    for(action in binds) {
-      requireNotNull(action).invoke(statement)
-    }
-
-    return mapper(AndroidxCursor(statement)).value
-  }
-
-  override fun toString() = sql
-
-  override fun reset() {
-    statement.reset()
-  }
-
-  override fun close() {
-    statement.close()
-  }
-}
-
-private class AndroidxCursor(
-  private val statement: SQLiteStatement,
-) : SqlCursor {
-
-  override fun next(): QueryResult.Value<Boolean> = QueryResult.Value(statement.step())
-  override fun getString(index: Int) =
-    if(statement.isNull(index)) null else statement.getText(index)
-
-  override fun getLong(index: Int) = if(statement.isNull(index)) null else statement.getLong(index)
-  override fun getBytes(index: Int) =
-    if(statement.isNull(index)) null else statement.getBlob(index)
-
-  override fun getDouble(index: Int) =
-    if(statement.isNull(index)) null else statement.getDouble(index)
-
-  override fun getBoolean(index: Int) =
-    if(statement.isNull(index)) null else statement.getLong(index) == 1L
 }
