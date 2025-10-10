@@ -22,7 +22,7 @@ kotlinx-coroutines = "1.10.2"
 
 ktlint = "1.7.1"
 
-okio = "3.16.0"
+okio = "3.16.1"
 
 publish = "0.34.0"
 
