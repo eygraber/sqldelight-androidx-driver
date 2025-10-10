@@ -2,21 +2,23 @@ package com.eygraber.sqldelight.androidx.driver
 
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlCursor
+import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.db.SqlPreparedStatement
 
 public class AndroidxSqliteConfigurableDriver(
-  private val driver: AndroidxSqliteDriver,
+  private val driver: SqlDriver,
 ) {
   public fun setForeignKeyConstraintsEnabled(isForeignKeyConstraintsEnabled: Boolean) {
-    driver.setForeignKeyConstraintsEnabled(isForeignKeyConstraintsEnabled)
+    val foreignKey = if(isForeignKeyConstraintsEnabled) "ON" else "OFF"
+    executePragma("foreign_keys = $foreignKey")
   }
 
   public fun setJournalMode(journalMode: SqliteJournalMode) {
-    driver.setJournalMode(journalMode)
+    executePragma("journal_mode = ${journalMode.value}")
   }
 
   public fun setSync(sync: SqliteSync) {
-    driver.setSync(sync)
+    executePragma("synchronous = ${sync.value}")
   }
 
   public fun executePragma(
@@ -27,10 +29,10 @@ public class AndroidxSqliteConfigurableDriver(
     driver.execute(null, "PRAGMA $pragma;", parameters, binders)
   }
 
-  public fun <T> executePragmaQuery(
+  public fun <R> executePragmaQuery(
     pragma: String,
-    mapper: (SqlCursor) -> QueryResult<T>,
+    mapper: (SqlCursor) -> QueryResult<R>,
     parameters: Int = 0,
     binders: (SqlPreparedStatement.() -> Unit)? = null,
-  ): QueryResult.Value<T> = driver.executeQuery(null, "PRAGMA $pragma;", mapper, parameters, binders)
+  ): QueryResult<R> = driver.executeQuery(null, "PRAGMA $pragma;", mapper, parameters, binders)
 }

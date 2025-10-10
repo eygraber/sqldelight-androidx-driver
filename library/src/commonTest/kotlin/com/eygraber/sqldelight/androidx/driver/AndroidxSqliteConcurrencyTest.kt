@@ -5,6 +5,7 @@ import app.cash.sqldelight.db.AfterVersion
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.db.SqlSchema
+import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteConcurrencyModel.MultipleReadersSingleWriter
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.joinAll
@@ -108,7 +109,10 @@ abstract class AndroidxSqliteConcurrencyTest {
     deleteDbBeforeRun: Boolean = true,
     deleteDbAfterRun: Boolean = true,
     configuration: AndroidxSqliteConfiguration = AndroidxSqliteConfiguration(
-      readerConnectionsCount = CONCURRENCY - 1,
+      concurrencyModel = MultipleReadersSingleWriter(
+        isWal = true,
+        walCount = CONCURRENCY - 1,
+      ),
     ),
     test: SqlDriver.() -> Unit,
   ) {
@@ -223,7 +227,7 @@ abstract class AndroidxSqliteConcurrencyTest {
       val jobs = mutableListOf<Job>()
       repeat(CONCURRENCY) {
         jobs += launch(IoDispatcher) {
-          executeQuery(null, "PRAGMA journal_mode = WAL;", { QueryResult.Unit }, 0, null)
+          executeQuery(null, "PRAGMA user_version;", { QueryResult.Unit }, 0, null)
         }
       }
 

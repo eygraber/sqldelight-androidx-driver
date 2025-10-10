@@ -2,36 +2,48 @@ package com.eygraber.sqldelight.androidx.driver
 
 import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.execSQL
-import kotlinx.atomicfu.atomic
+import app.cash.sqldelight.db.QueryResult
+import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteConcurrencyModel.MultipleReadersSingleWriter
+import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteConcurrencyModel.SingleReaderWriter
+import kotlinx.atomicfu.locks.ReentrantLock
+import kotlinx.atomicfu.locks.withLock
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlin.concurrent.Volatile
 
-public interface ConnectionPool : AutoCloseable {
-  public val configuration: AndroidxSqliteConfiguration
+internal interface ConnectionPool : AutoCloseable {
+  fun acquireWriterConnection(): SQLiteConnection
+  fun releaseWriterConnection()
+  fun acquireReaderConnection(): SQLiteConnection
+  fun releaseReaderConnection(connection: SQLiteConnection)
+  fun <R> setJournalMode(
+    executeStatement: (SQLiteConnection) -> QueryResult.Value<R>,
+  ): QueryResult.Value<R>
+}
 
-  public fun acquireWriterConnection(): SQLiteConnection
-  public fun releaseWriterConnection()
-  public fun acquireReaderConnection(): SQLiteConnection
-  public fun releaseReaderConnection(connection: SQLiteConnection)
-  public fun setJournalMode(journalMode: SqliteJournalMode)
-  public fun updateForeignKeyConstraintsEnabled(isForeignKeyConstraintsEnabled: Boolean)
-  public fun updateSync(sync: SqliteSync)
+internal inline fun <R> ConnectionPool.withWriterConnection(
+  block: SQLiteConnection.() -> R,
+): R {
+  val connection = acquireWriterConnection()
+  try {
+    return connection.block()
+  } finally {
+    releaseWriterConnection()
+  }
 }
 
 internal class AndroidxDriverConnectionPool(
   private val connectionFactory: AndroidxSqliteConnectionFactory,
   nameProvider: () -> String,
-  isFileBased: Boolean,
-  configuration: AndroidxSqliteConfiguration,
+  private val isFileBased: Boolean,
+  private val configuration: AndroidxSqliteConfiguration,
 ) : ConnectionPool {
   private data class ReaderSQLiteConnection(
     val isCreated: Boolean,
     val connection: Lazy<SQLiteConnection>,
   )
-
-  override var configuration by atomic(configuration)
 
   private val name by lazy { nameProvider() }
 
@@ -43,26 +55,18 @@ internal class AndroidxDriverConnectionPool(
 
   private val writerMutex = Mutex()
 
-  private val maxReaderConnectionsCount = when {
-    isFileBased -> configuration.readerConnectionsCount
-    else -> 0
+  private val journalModeLock = ReentrantLock()
+
+  @Volatile
+  private var concurrencyModel = when {
+    isFileBased -> configuration.concurrencyModel
+    else -> SingleReaderWriter
   }
 
-  private val readerChannel = Channel<ReaderSQLiteConnection>(capacity = maxReaderConnectionsCount)
+  private val readerChannel = Channel<ReaderSQLiteConnection>(capacity = Channel.UNLIMITED)
 
   init {
-    repeat(maxReaderConnectionsCount) {
-      readerChannel.trySend(
-        ReaderSQLiteConnection(
-          isCreated = false,
-          lazy {
-            connectionFactory
-              .createConnection(name)
-              .withReaderConfiguration(configuration)
-          },
-        ),
-      )
-    }
+    populateReaderConnectionChannel()
   }
 
   /**
@@ -85,10 +89,12 @@ internal class AndroidxDriverConnectionPool(
    * Acquires a reader connection, blocking if none are available.
    * @return A reader SQLiteConnection
    */
-  override fun acquireReaderConnection() = when(maxReaderConnectionsCount) {
-    0 -> acquireWriterConnection()
-    else -> runBlocking {
-      readerChannel.receive().connection.value
+  override fun acquireReaderConnection() = journalModeLock.withLock {
+    when(concurrencyModel.readerCount) {
+      0 -> acquireWriterConnection()
+      else -> runBlocking {
+        readerChannel.receive().connection.value
+      }
     }
   }
 
@@ -97,7 +103,7 @@ internal class AndroidxDriverConnectionPool(
    * @param connection The SQLiteConnection to release
    */
   override fun releaseReaderConnection(connection: SQLiteConnection) {
-    when(maxReaderConnectionsCount) {
+    when(concurrencyModel.readerCount) {
       0 -> releaseWriterConnection()
       else -> runBlocking {
         readerChannel.send(
@@ -110,48 +116,26 @@ internal class AndroidxDriverConnectionPool(
     }
   }
 
-  override fun setJournalMode(journalMode: SqliteJournalMode) {
-    configuration = configuration.copy(
-      journalMode = journalMode,
-    )
+  override fun <R> setJournalMode(
+    executeStatement: (SQLiteConnection) -> QueryResult.Value<R>,
+  ): QueryResult.Value<R> = journalModeLock.withLock {
+    closeAllReaderConnections()
 
-    runPragmaOnAllCreatedConnections("PRAGMA journal_mode = ${configuration.journalMode.value};")
-  }
-
-  override fun updateForeignKeyConstraintsEnabled(isForeignKeyConstraintsEnabled: Boolean) {
-    configuration = configuration.copy(
-      isForeignKeyConstraintsEnabled = isForeignKeyConstraintsEnabled,
-    )
-  }
-
-  override fun updateSync(sync: SqliteSync) {
-    configuration = configuration.copy(
-      sync = sync,
-    )
-  }
-
-  private fun runPragmaOnAllCreatedConnections(sql: String) {
     val writer = acquireWriterConnection()
     try {
-      writer.execSQL(sql)
-    } finally {
-      releaseWriterConnection()
-    }
+      // really hope the result is a String...
+      val queryResult = executeStatement(writer)
+      val result = queryResult.value.toString()
 
-    if(maxReaderConnectionsCount > 0) {
-      runBlocking {
-        repeat(maxReaderConnectionsCount) {
-          val reader = readerChannel.receive()
-          try {
-            // only apply the pragma to connections that were already created
-            if(reader.isCreated) {
-              reader.connection.value.execSQL(sql)
-            }
-          } finally {
-            readerChannel.send(reader)
-          }
-        }
+      (concurrencyModel as? MultipleReadersSingleWriter)?.let { previousModel ->
+        val isWal = result.equals("wal", ignoreCase = true)
+        concurrencyModel = previousModel.copy(isWal = isWal)
       }
+
+      return queryResult
+    } finally {
+      populateReaderConnectionChannel()
+      releaseWriterConnection()
     }
   }
 
@@ -163,11 +147,43 @@ internal class AndroidxDriverConnectionPool(
       writerMutex.withLock {
         writerConnection.close()
       }
-      repeat(maxReaderConnectionsCount) {
+
+      repeat(concurrencyModel.readerCount) {
         val reader = readerChannel.receive()
         if(reader.isCreated) reader.connection.value.close()
       }
       readerChannel.close()
+    }
+  }
+
+  private fun closeAllReaderConnections() {
+    val readerCount = concurrencyModel.readerCount
+    if(readerCount > 0) {
+      runBlocking {
+        repeat(readerCount) {
+          val reader = readerChannel.receive()
+          try {
+            // only apply the pragma to connections that were already created
+            if(reader.isCreated) {
+              reader.connection.value.close()
+            }
+          } catch(_: Throwable) {
+          }
+        }
+      }
+    }
+  }
+
+  private fun populateReaderConnectionChannel() {
+    repeat(concurrencyModel.readerCount) {
+      readerChannel.trySend(
+        ReaderSQLiteConnection(
+          isCreated = false,
+          connection = lazy {
+            connectionFactory.createConnection(name)
+          },
+        ),
+      )
     }
   }
 }
@@ -177,8 +193,6 @@ internal class PassthroughConnectionPool(
   nameProvider: () -> String,
   configuration: AndroidxSqliteConfiguration,
 ) : ConnectionPool {
-  override var configuration by atomic(configuration)
-
   private val name by lazy { nameProvider() }
 
   private val delegatedConnection: SQLiteConnection by lazy {
@@ -193,28 +207,22 @@ internal class PassthroughConnectionPool(
 
   override fun releaseReaderConnection(connection: SQLiteConnection) {}
 
-  override fun setJournalMode(journalMode: SqliteJournalMode) {
-    configuration = configuration.copy(
-      journalMode = journalMode,
-    )
+  override fun <R> setJournalMode(
+    executeStatement: (SQLiteConnection) -> QueryResult.Value<R>,
+  ): QueryResult.Value<R> {
+    val isForeignKeyConstraintsEnabled =
+      delegatedConnection
+        .prepare("PRAGMA foreign_keys;")
+        .apply { step() }
+        .getBoolean(0)
 
-    delegatedConnection.execSQL("PRAGMA journal_mode = ${configuration.journalMode.value};")
+    val queryResult = executeStatement(delegatedConnection)
 
-    // this needs to come after PRAGMA journal_mode until https://issuetracker.google.com/issues/447613208 is fixed
-    val foreignKeys = if(configuration.isForeignKeyConstraintsEnabled) "ON" else "OFF"
+    // PRAGMA journal_mode currently wipes out foreign_keys - https://issuetracker.google.com/issues/447613208
+    val foreignKeys = if(isForeignKeyConstraintsEnabled) "ON" else "OFF"
     delegatedConnection.execSQL("PRAGMA foreign_keys = $foreignKeys;")
-  }
 
-  override fun updateForeignKeyConstraintsEnabled(isForeignKeyConstraintsEnabled: Boolean) {
-    configuration = configuration.copy(
-      isForeignKeyConstraintsEnabled = isForeignKeyConstraintsEnabled,
-    )
-  }
-
-  override fun updateSync(sync: SqliteSync) {
-    configuration = configuration.copy(
-      sync = sync,
-    )
+    return queryResult
   }
 
   override fun close() {
@@ -230,15 +238,8 @@ private fun SQLiteConnection.withWriterConfiguration(
     execSQL("PRAGMA journal_mode = ${journalMode.value};")
     execSQL("PRAGMA synchronous = ${sync.value};")
 
-    // this needs to come after PRAGMA journal_mode until https://issuetracker.google.com/issues/447613208 is fixed
+    // this must to come after PRAGMA journal_mode while https://issuetracker.google.com/issues/447613208 is broken
     val foreignKeys = if(isForeignKeyConstraintsEnabled) "ON" else "OFF"
     execSQL("PRAGMA foreign_keys = $foreignKeys;")
   }
-}
-
-private fun SQLiteConnection.withReaderConfiguration(
-  configuration: AndroidxSqliteConfiguration,
-): SQLiteConnection = this.apply {
-  // copy the configuration for thread safety
-  execSQL("PRAGMA journal_mode = ${configuration.copy().journalMode.value};")
 }

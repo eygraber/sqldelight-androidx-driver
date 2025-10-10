@@ -524,7 +524,7 @@ abstract class AndroidxSqliteCreationTest {
   }
 
   @Test
-  fun `foreign keys are re-enabled after an exception is thrown during creation`() {
+  fun `future queries throw a propagated exception after an exception is thrown during creation`() {
     val schema = getSchema {
       throw RuntimeException("Test")
     }
@@ -546,20 +546,21 @@ abstract class AndroidxSqliteCreationTest {
         execute(null, "PRAGMA user_version;", 0, null)
       }
 
-      assertTrue {
+      assertFailsWith<RuntimeException> {
         executeQuery(
           identifier = null,
           sql = "PRAGMA foreign_keys;",
-          mapper = { cursor ->
-            QueryResult.Value(
-              when {
-                cursor.next().value -> cursor.getLong(0)
-                else -> 0L
-              },
-            )
-          },
+          mapper = { QueryResult.Unit },
           parameters = 0,
-        ).value == 1L
+        )
+      }
+
+      assertFailsWith<RuntimeException> {
+        execute(
+          identifier = null,
+          sql = "PRAGMA foreign_keys = OFF;",
+          parameters = 0,
+        )
       }
     }
   }

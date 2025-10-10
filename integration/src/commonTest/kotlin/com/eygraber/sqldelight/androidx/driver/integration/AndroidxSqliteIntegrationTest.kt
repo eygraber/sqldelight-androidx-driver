@@ -22,8 +22,8 @@ abstract class AndroidxSqliteIntegrationTest {
 
   @OptIn(ExperimentalCoroutinesApi::class, DelicateCoroutinesApi::class)
   private fun readDispatcher(): CoroutineDispatcher? = when {
-    configuration.readerConnectionsCount >= 1 -> newFixedThreadPoolContext(
-      nThreads = configuration.readerConnectionsCount,
+    configuration.concurrencyModel.readerCount >= 1 -> newFixedThreadPoolContext(
+      nThreads = configuration.concurrencyModel.readerCount,
       name = "db-reads",
     )
     else -> null
