@@ -3,15 +3,14 @@ package com.eygraber.sqldelight.androidx.driver
 import androidx.collection.LruCache
 import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.execSQL
-import app.cash.sqldelight.TransacterImpl
+import app.cash.sqldelight.SuspendingTransacterImpl
 import app.cash.sqldelight.db.AfterVersion
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.db.SqlSchema
-import kotlinx.atomicfu.atomic
 import kotlinx.atomicfu.locks.ReentrantLock
-import kotlinx.atomicfu.locks.SynchronizedObject
-import kotlinx.atomicfu.locks.synchronized
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 internal class AndroidxSqliteDriverHolder(
   private val connectionPool: ConnectionPool,
@@ -19,7 +18,7 @@ internal class AndroidxSqliteDriverHolder(
   private val statementCacheLock: ReentrantLock,
   private val statementCacheSize: Int,
   private val transactions: TransactionsThreadLocal,
-  private val schema: SqlSchema<QueryResult.Value<Unit>>,
+  private val schema: SqlSchema<QueryResult.AsyncValue<Unit>>,
   private val isForeignKeyConstraintsEnabled: Boolean,
   private val isForeignKeyConstraintsCheckedAfterCreateOrUpdate: Boolean,
   private val maxMigrationForeignKeyConstraintViolationsToReport: Int,
@@ -41,15 +40,16 @@ internal class AndroidxSqliteDriverHolder(
     )
   }
 
-  private val createOrMigrateLock = SynchronizedObject()
+  private val createOrMigrateMutex = Mutex()
 
-  @Suppress("NonBooleanPropertyPrefixedWithIs")
-  private val isFirstInteraction = atomic(true)
+  private var isFirstInteraction = true
 
-  inline fun <R> ensureSchemaIsReady(block: AndroidxSqliteExecutingDriver.() -> R): R {
-    if(isFirstInteraction.value) {
-      synchronized(createOrMigrateLock) {
-        if(isFirstInteraction.value) {
+  fun currentTransaction() = executingDriver.currentTransaction()
+
+  suspend inline fun <R> ensureSchemaIsReady(block: AndroidxSqliteExecutingDriver.() -> R): R {
+    if(isFirstInteraction) {
+      createOrMigrateMutex.withLock {
+        if(isFirstInteraction) {
           val executingDriver = AndroidxSqliteExecutingDriver(
             connectionPool = connectionPool,
             isStatementCacheSkipped = true,
@@ -72,15 +72,15 @@ internal class AndroidxSqliteDriverHolder(
 
           val isCreate = currentVersion == 0L && !migrateEmptySchema
           if(isCreate || currentVersion < schema.version) {
-            val transacter = object : TransacterImpl(executingDriver) {}
+            val transacter = object : SuspendingTransacterImpl(executingDriver) {}
 
             connectionPool.withForeignKeysDisabled(
               isForeignKeyConstraintsEnabled = isForeignKeyConstraintsEnabled,
             ) {
               transacter.transaction {
                 when {
-                  isCreate -> schema.create(executingDriver).value
-                  else -> schema.migrate(executingDriver, currentVersion, schema.version, *migrationCallbacks).value
+                  isCreate -> schema.create(executingDriver).await()
+                  else -> schema.migrate(executingDriver, currentVersion, schema.version, *migrationCallbacks).await()
                 }
 
                 val transactionConnection = requireNotNull(
@@ -107,7 +107,7 @@ internal class AndroidxSqliteDriverHolder(
 
           executingDriver.onOpen()
 
-          isFirstInteraction.value = false
+          isFirstInteraction = false
         }
       }
     }
@@ -116,9 +116,9 @@ internal class AndroidxSqliteDriverHolder(
   }
 }
 
-private inline fun ConnectionPool.withForeignKeysDisabled(
+private suspend inline fun ConnectionPool.withForeignKeysDisabled(
   isForeignKeyConstraintsEnabled: Boolean,
-  crossinline block: () -> Unit,
+  crossinline block: suspend () -> Unit,
 ) {
   if(isForeignKeyConstraintsEnabled) {
     withWriterConnection {

@@ -60,6 +60,7 @@ sqldelight {
 
       deriveSchemaFromMigrations = false
       treatNullAsUnknownForEquality = true
+      generateAsync = true
     }
   }
 }

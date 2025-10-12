@@ -64,6 +64,8 @@ kotlin {
     commonTest.dependencies {
       implementation(libs.kotlinx.coroutines.core)
 
+      implementation(libs.cashapp.sqldelight.async)
+
       implementation(libs.test.kotlin)
       implementation(libs.test.kotlinx.coroutines)
     }

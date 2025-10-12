@@ -24,18 +24,19 @@ internal class AndroidxSqliteExecutingDriver(
   private val statementCacheSize: Int,
   private val transactions: TransactionsThreadLocal,
 ) : SqlDriver {
-  override fun newTransaction(): QueryResult<Transacter.Transaction> {
-    val enclosing = transactions.get()
-    val transactionConnection = when(enclosing as? ConnectionHolder) {
-      null -> connectionPool.acquireWriterConnection()
-      else -> enclosing.connection
+  override fun newTransaction(): QueryResult<Transacter.Transaction> =
+    QueryResult.AsyncValue {
+      val enclosing = transactions.get()
+      val transactionConnection = when(enclosing as? ConnectionHolder) {
+        null -> connectionPool.acquireWriterConnection()
+        else -> enclosing.connection
+      }
+      val transaction = Transaction(enclosing, transactionConnection)
+
+      transactions.set(transaction)
+
+      transaction
     }
-    val transaction = Transaction(enclosing, transactionConnection)
-
-    transactions.set(transaction)
-
-    return QueryResult.Value(transaction)
-  }
 
   override fun currentTransaction(): Transacter.Transaction? = transactions.get()
 
@@ -45,35 +46,37 @@ internal class AndroidxSqliteExecutingDriver(
     mapper: (SqlCursor) -> QueryResult<R>,
     parameters: Int,
     binders: (SqlPreparedStatement.() -> Unit)?,
-  ): QueryResult.Value<R> {
+  ): QueryResult<R> {
     val specialCase = AndroidxSqliteUtils.findSpecialCase(sql)
 
-    return if(specialCase == AndroidxSqliteSpecialCase.SetJournalMode) {
-      setJournalMode(
-        sql = sql,
-        mapper = mapper,
-        parameters = parameters,
-        binders = binders,
-      )
-    } else {
-      withConnection(
-        isWrite = specialCase == AndroidxSqliteSpecialCase.ForeignKeys ||
-          specialCase == AndroidxSqliteSpecialCase.Synchronous,
-      ) {
-        executeStatement(
-          identifier = identifier,
-          isStatementCacheSkipped = isStatementCacheSkipped,
-          connection = this,
-          createStatement = { c ->
-            AndroidxQuery(
-              sql = sql,
-              statement = c.prepare(sql),
-              argCount = parameters,
-            )
-          },
+    return QueryResult.AsyncValue {
+      if(specialCase == AndroidxSqliteSpecialCase.SetJournalMode) {
+        setJournalMode(
+          sql = sql,
+          mapper = mapper,
+          parameters = parameters,
           binders = binders,
-          result = { executeQuery(mapper) },
         )
+      } else {
+        withConnection(
+          isWrite = specialCase == AndroidxSqliteSpecialCase.ForeignKeys ||
+            specialCase == AndroidxSqliteSpecialCase.Synchronous,
+        ) {
+          executeStatement(
+            identifier = identifier,
+            isStatementCacheSkipped = isStatementCacheSkipped,
+            connection = this,
+            createStatement = { c ->
+              AndroidxQuery(
+                sql = sql,
+                statement = c.prepare(sql),
+                argCount = parameters,
+              )
+            },
+            binders = binders,
+            result = { executeQuery(mapper) },
+          )
+        }
       }
     }
   }
@@ -83,44 +86,48 @@ internal class AndroidxSqliteExecutingDriver(
     sql: String,
     parameters: Int,
     binders: (SqlPreparedStatement.() -> Unit)?,
-  ) = when(AndroidxSqliteUtils.findSpecialCase(sql)) {
-    AndroidxSqliteSpecialCase.SetJournalMode -> {
-      setJournalMode(
-        sql = sql,
-        mapper = { cursor ->
-          cursor.next()
-          QueryResult.Value(cursor.getString(0))
-        },
-        parameters = parameters,
-        binders = binders,
-      )
-      QueryResult.Value(1L)
-    }
+  ) = QueryResult.AsyncValue {
+    when(AndroidxSqliteUtils.findSpecialCase(sql)) {
+      AndroidxSqliteSpecialCase.SetJournalMode -> {
+        setJournalMode(
+          sql = sql,
+          mapper = { cursor ->
+            cursor.next()
+            QueryResult.AsyncValue { cursor.getString(0) }
+          },
+          parameters = parameters,
+          binders = binders,
+        )
 
-    AndroidxSqliteSpecialCase.ForeignKeys,
-    AndroidxSqliteSpecialCase.Synchronous,
-    null,
-    -> withConnection(isWrite = true) {
-      executeStatement(
-        identifier = identifier,
-        isStatementCacheSkipped = isStatementCacheSkipped,
-        connection = this,
-        createStatement = { c ->
-          AndroidxPreparedStatement(
-            sql = sql,
-            statement = c.prepare(sql),
-          )
-        },
-        binders = binders,
-        result = {
-          execute()
-          getTotalChangedRows()
-        },
-      )
+        // hardcode 1 as the QueryResult value
+        1L
+      }
+
+      AndroidxSqliteSpecialCase.ForeignKeys,
+      AndroidxSqliteSpecialCase.Synchronous,
+      null,
+      -> withConnection(isWrite = true) {
+        executeStatement(
+          identifier = identifier,
+          isStatementCacheSkipped = isStatementCacheSkipped,
+          connection = this,
+          createStatement = { c ->
+            AndroidxPreparedStatement(
+              sql = sql,
+              statement = c.prepare(sql),
+            )
+          },
+          binders = binders,
+          result = {
+            execute()
+            getTotalChangedRows()
+          },
+        )
+      }
     }
   }
 
-  private fun <R> setJournalMode(
+  private suspend fun <R> setJournalMode(
     sql: String,
     mapper: (SqlCursor) -> QueryResult<R>,
     parameters: Int,
@@ -142,14 +149,14 @@ internal class AndroidxSqliteExecutingDriver(
     )
   }
 
-  private fun <T> executeStatement(
+  private suspend fun <T> executeStatement(
     identifier: Int?,
     isStatementCacheSkipped: Boolean,
     connection: SQLiteConnection,
     createStatement: (SQLiteConnection) -> AndroidxStatement,
     binders: (SqlPreparedStatement.() -> Unit)?,
-    result: AndroidxStatement.() -> T,
-  ): QueryResult.Value<T> {
+    result: suspend AndroidxStatement.() -> T,
+  ): T {
     val statementsCache = if(!isStatementCacheSkipped) getStatementCache(connection) else null
     var statement: AndroidxStatement? = null
     if(identifier != null && statementsCache != null) {
@@ -163,7 +170,7 @@ internal class AndroidxSqliteExecutingDriver(
       if(binders != null) {
         statement.binders()
       }
-      return QueryResult.Value(statement.result())
+      return statement.result()
     } finally {
       if(identifier != null && !isStatementCacheSkipped) {
         statement.reset()
@@ -199,7 +206,7 @@ internal class AndroidxSqliteExecutingDriver(
       }
     }
 
-  private inline fun <R> withConnection(
+  private suspend inline fun <R> withConnection(
     isWrite: Boolean,
     block: SQLiteConnection.() -> R,
   ): R = when(val holder = currentTransaction() as? ConnectionHolder) {
@@ -237,21 +244,21 @@ internal class AndroidxSqliteExecutingDriver(
       }
     }
 
-    override fun endTransaction(successful: Boolean): QueryResult<Unit> {
-      if(enclosingTransaction == null) {
-        try {
-          if(successful) {
-            connection.execSQL("COMMIT")
-          } else {
-            connection.execSQL("ROLLBACK")
+    override fun endTransaction(successful: Boolean): QueryResult<Unit> =
+      QueryResult.AsyncValue {
+        if(enclosingTransaction == null) {
+          try {
+            if(successful) {
+              connection.execSQL("COMMIT")
+            } else {
+              connection.execSQL("ROLLBACK")
+            }
+          } finally {
+            connectionPool.releaseWriterConnection()
           }
-        } finally {
-          connectionPool.releaseWriterConnection()
         }
+        transactions.set(enclosingTransaction)
       }
-      transactions.set(enclosingTransaction)
-      return QueryResult.Unit
-    }
   }
 }
 

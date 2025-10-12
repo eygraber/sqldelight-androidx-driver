@@ -4,6 +4,7 @@ import app.cash.sqldelight.db.AfterVersion
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.db.SqlSchema
+import kotlinx.coroutines.test.runTest
 import kotlin.random.Random
 import kotlin.random.nextULong
 import kotlin.test.Test
@@ -14,11 +15,11 @@ import kotlin.test.assertTrue
 
 abstract class AndroidxSqliteMigrationTest {
   private fun getSchema(
-    additionalMigrationSteps: SqlDriver.() -> Unit = {},
-  ) = object : SqlSchema<QueryResult.Value<Unit>> {
+    additionalMigrationSteps: suspend SqlDriver.() -> Unit = {},
+  ) = object : SqlSchema<QueryResult.AsyncValue<Unit>> {
     override var version: Long = 1
 
-    override fun create(driver: SqlDriver): QueryResult.Value<Unit> {
+    override fun create(driver: SqlDriver): QueryResult.AsyncValue<Unit> = QueryResult.AsyncValue {
       driver.execute(
         null,
         """
@@ -28,7 +29,7 @@ abstract class AndroidxSqliteMigrationTest {
         |);
         """.trimMargin(),
         0,
-      )
+      ).await()
 
       driver.execute(
         null,
@@ -39,7 +40,7 @@ abstract class AndroidxSqliteMigrationTest {
         |);
         """.trimMargin(),
         0,
-      )
+      ).await()
 
       driver.execute(
         null,
@@ -47,7 +48,7 @@ abstract class AndroidxSqliteMigrationTest {
         |INSERT INTO user VALUES(1, 'bob'), (2, 'alice');
         """.trimMargin(),
         0,
-      )
+      ).await()
 
       driver.execute(
         null,
@@ -55,9 +56,7 @@ abstract class AndroidxSqliteMigrationTest {
         |INSERT INTO post VALUES(1, 1), (2, 1), (3, 2), (4, 2);
         """.trimMargin(),
         0,
-      )
-
-      return QueryResult.Unit
+      ).await()
     }
 
     override fun migrate(
@@ -65,7 +64,7 @@ abstract class AndroidxSqliteMigrationTest {
       oldVersion: Long,
       newVersion: Long,
       vararg callbacks: AfterVersion,
-    ): QueryResult.Value<Unit> {
+    ): QueryResult.AsyncValue<Unit> = QueryResult.AsyncValue {
       driver.execute(
         null,
         """
@@ -75,7 +74,7 @@ abstract class AndroidxSqliteMigrationTest {
         |);
         """.trimMargin(),
         0,
-      )
+      ).await()
 
       driver.execute(
         null,
@@ -83,7 +82,7 @@ abstract class AndroidxSqliteMigrationTest {
         |INSERT INTO newUser(id, name) SELECT id, name FROM user;
         """.trimMargin(),
         0,
-      )
+      ).await()
 
       driver.execute(
         null,
@@ -91,7 +90,7 @@ abstract class AndroidxSqliteMigrationTest {
         |DROP TABLE user;
         """.trimMargin(),
         0,
-      )
+      ).await()
 
       driver.execute(
         null,
@@ -99,16 +98,14 @@ abstract class AndroidxSqliteMigrationTest {
         |ALTER TABLE newUser RENAME TO user;
         """.trimMargin(),
         0,
-      )
+      ).await()
 
       driver.additionalMigrationSteps()
-
-      return QueryResult.Unit
     }
   }
 
   private inline fun withDatabase(
-    schema: SqlSchema<QueryResult.Value<Unit>>,
+    schema: SqlSchema<QueryResult.AsyncValue<Unit>>,
     dbName: String,
     noinline onCreate: SqlDriver.() -> Unit,
     noinline onUpdate: SqlDriver.(Long, Long) -> Unit,
@@ -160,7 +157,7 @@ abstract class AndroidxSqliteMigrationTest {
     AndroidxSqliteDatabaseType.File(fullDbName)
 
   @Test
-  fun `migrations don't cause ON DELETE CASCADE to trigger`() {
+  fun `migrations don't cause ON DELETE CASCADE to trigger`() = runTest {
     val schema = getSchema()
     val dbName = Random.nextULong().toHexString()
 
@@ -185,9 +182,9 @@ abstract class AndroidxSqliteMigrationTest {
           }
         },
         parameters = 0,
-      )
+      ).await()
 
-      assertEquals(4, result.value)
+      assertEquals(4, result)
     }
 
     schema.version++
@@ -211,14 +208,14 @@ abstract class AndroidxSqliteMigrationTest {
           }
         },
         parameters = 0,
-      )
+      ).await()
 
-      assertEquals(4, result.value)
+      assertEquals(4, result)
     }
   }
 
   @Test
-  fun `foreign keys are disabled during migration`() {
+  fun `foreign keys are disabled during migration`() = runTest {
     val schema = getSchema {
       assertTrue {
         executeQuery(
@@ -233,7 +230,7 @@ abstract class AndroidxSqliteMigrationTest {
             )
           },
           parameters = 0,
-        ).value == 0L
+        ).await() == 0L
       }
     }
 
@@ -260,9 +257,9 @@ abstract class AndroidxSqliteMigrationTest {
           }
         },
         parameters = 0,
-      )
+      ).await()
 
-      assertEquals(4, result.value)
+      assertEquals(4, result)
     }
 
     schema.version++
@@ -275,12 +272,12 @@ abstract class AndroidxSqliteMigrationTest {
       onConfigure = {},
       deleteDbBeforeRun = false,
     ) {
-      execute(null, "PRAGMA user_version;", 0, null)
+      execute(null, "PRAGMA user_version;", 0, null).await()
     }
   }
 
   @Test
-  fun `foreign keys are re-enabled after successful migration`() {
+  fun `foreign keys are re-enabled after successful migration`() = runTest {
     val schema = getSchema()
     val dbName = Random.nextULong().toHexString()
 
@@ -305,9 +302,9 @@ abstract class AndroidxSqliteMigrationTest {
           }
         },
         parameters = 0,
-      )
+      ).await()
 
-      assertEquals(4, result.value)
+      assertEquals(4, result)
     }
 
     schema.version++
@@ -333,13 +330,13 @@ abstract class AndroidxSqliteMigrationTest {
             )
           },
           parameters = 0,
-        ).value == 1L
+        ).await() == 1L
       }
     }
   }
 
   @Test
-  fun `foreign key constraint violations during migrations fail after the migration`() {
+  fun `foreign key constraint violations during migrations fail after the migration`() = runTest {
     val configuration = AndroidxSqliteConfiguration(
       isForeignKeyConstraintsEnabled = true,
       isForeignKeyConstraintsCheckedAfterCreateOrUpdate = true,
@@ -352,7 +349,7 @@ abstract class AndroidxSqliteMigrationTest {
         |DELETE FROM user WHERE id = 1;
         """.trimMargin(),
         0,
-      )
+      ).await()
     }
     val dbName = Random.nextULong().toHexString()
 
@@ -367,7 +364,7 @@ abstract class AndroidxSqliteMigrationTest {
       deleteDbAfterRun = false,
       configuration = configuration,
     ) {
-      execute(null, "PRAGMA user_version;", 0, null)
+      execute(null, "PRAGMA user_version;", 0, null).await()
     }
 
     schema.version++
@@ -383,7 +380,7 @@ abstract class AndroidxSqliteMigrationTest {
         deleteDbBeforeRun = false,
         configuration = configuration,
       ) {
-        execute(null, "PRAGMA user_version;", 0, null)
+        execute(null, "PRAGMA user_version;", 0, null).await()
       }
     }
 
@@ -426,67 +423,25 @@ abstract class AndroidxSqliteMigrationTest {
   }
 
   @Test
-  fun `foreign key constraint violations during migrations respects the default max amount of reported violations`() {
-    val configuration = AndroidxSqliteConfiguration(
-      isForeignKeyConstraintsEnabled = true,
-      isForeignKeyConstraintsCheckedAfterCreateOrUpdate = true,
-    )
+  fun `foreign key constraint violations during migrations respects the default max amount of reported violations`() =
+    runTest {
+      val configuration = AndroidxSqliteConfiguration(
+        isForeignKeyConstraintsEnabled = true,
+        isForeignKeyConstraintsCheckedAfterCreateOrUpdate = true,
+      )
 
-    val schema = getSchema {
-      execute(
-        null,
-        """
+      val schema = getSchema {
+        execute(
+          null,
+          """
         |DELETE FROM user WHERE id = 1;
-        """.trimMargin(),
-        0,
-      )
-    }
-    val dbName = Random.nextULong().toHexString()
+          """.trimMargin(),
+          0,
+        ).await()
+      }
+      val dbName = Random.nextULong().toHexString()
 
-    // trigger creation
-    withDatabase(
-      schema = schema,
-      dbName = dbName,
-      onCreate = {},
-      onUpdate = { _, _ -> },
-      onOpen = {},
-      onConfigure = {},
-      deleteDbAfterRun = false,
-      configuration = configuration,
-    ) {
-      val insertedValues = buildString {
-        repeat(configuration.maxMigrationForeignKeyConstraintViolationsToReport + 1) {
-          append("($it, 1),")
-        }
-      }.removeSuffix(",")
-
-      // remove the values inserted previously in the schema creation for a cleaner test
-      execute(
-        null,
-        "DELETE FROM post",
-        0,
-      )
-
-      execute(
-        null,
-        "INSERT INTO post VALUES $insertedValues",
-        0,
-      )
-    }
-
-    schema.version++
-
-    val messageViolations = List(5) { id ->
-      """
-      |ForeignKeyConstraintViolation:
-      |  Constraint index: 0
-      |  Referencing table: post
-      |  Referencing rowId: $id
-      |  Referenced table: user
-      """.trimMargin()
-    }.joinToString(separator = "\n\n")
-
-    val exception = assertFailsWith<AndroidxSqliteDriver.ForeignKeyConstraintCheckException> {
+      // trigger creation
       withDatabase(
         schema = schema,
         dbName = dbName,
@@ -494,39 +449,82 @@ abstract class AndroidxSqliteMigrationTest {
         onUpdate = { _, _ -> },
         onOpen = {},
         onConfigure = {},
-        deleteDbBeforeRun = false,
+        deleteDbAfterRun = false,
         configuration = configuration,
       ) {
-        execute(null, "PRAGMA user_version;", 0, null)
+        val insertedValues = buildString {
+          repeat(configuration.maxMigrationForeignKeyConstraintViolationsToReport + 1) {
+            append("($it, 1),")
+          }
+        }.removeSuffix(",")
+
+        // remove the values inserted previously in the schema creation for a cleaner test
+        execute(
+          null,
+          "DELETE FROM post",
+          0,
+        ).await()
+
+        execute(
+          null,
+          "INSERT INTO post VALUES $insertedValues",
+          0,
+        ).await()
       }
-    }
 
-    val expectedNotShown = configuration.maxMigrationForeignKeyConstraintViolationsToReport - 5
+      schema.version++
 
-    assertEquals(
-      expected = exception.message,
-      actual = """
+      val messageViolations = List(5) { id ->
+        """
+      |ForeignKeyConstraintViolation:
+      |  Constraint index: 0
+      |  Referencing table: post
+      |  Referencing rowId: $id
+      |  Referenced table: user
+        """.trimMargin()
+      }.joinToString(separator = "\n\n")
+
+      val exception = assertFailsWith<AndroidxSqliteDriver.ForeignKeyConstraintCheckException> {
+        withDatabase(
+          schema = schema,
+          dbName = dbName,
+          onCreate = {},
+          onUpdate = { _, _ -> },
+          onOpen = {},
+          onConfigure = {},
+          deleteDbBeforeRun = false,
+          configuration = configuration,
+        ) {
+          execute(null, "PRAGMA user_version;", 0, null).await()
+        }
+      }
+
+      val expectedNotShown = configuration.maxMigrationForeignKeyConstraintViolationsToReport - 5
+
+      assertEquals(
+        expected = exception.message,
+        actual = """
                |The following foreign key constraints are violated ($expectedNotShown not shown):
                |
                |$messageViolations
-      """.trimMargin(),
-    )
+        """.trimMargin(),
+      )
 
-    assertContentEquals(
-      expected = List(configuration.maxMigrationForeignKeyConstraintViolationsToReport) { id ->
-        AndroidxSqliteDriver.ForeignKeyConstraintViolation(
-          referencingTable = "post",
-          referencingRowId = id,
-          referencedTable = "user",
-          referencingConstraintIndex = 0,
-        )
-      },
-      actual = exception.violations,
-    )
-  }
+      assertContentEquals(
+        expected = List(configuration.maxMigrationForeignKeyConstraintViolationsToReport) { id ->
+          AndroidxSqliteDriver.ForeignKeyConstraintViolation(
+            referencingTable = "post",
+            referencingRowId = id,
+            referencedTable = "user",
+            referencingConstraintIndex = 0,
+          )
+        },
+        actual = exception.violations,
+      )
+    }
 
   @Test
-  fun `foreign key constraint violations during migrations respects the max amount of reported violations`() {
+  fun `foreign key constraint violations during migrations respects the max amount of reported violations`() = runTest {
     val configuration = AndroidxSqliteConfiguration(
       isForeignKeyConstraintsEnabled = true,
       isForeignKeyConstraintsCheckedAfterCreateOrUpdate = true,
@@ -540,7 +538,7 @@ abstract class AndroidxSqliteMigrationTest {
         |DELETE FROM user WHERE id = 1;
         """.trimMargin(),
         0,
-      )
+      ).await()
     }
     val dbName = Random.nextULong().toHexString()
 
@@ -555,7 +553,7 @@ abstract class AndroidxSqliteMigrationTest {
       deleteDbAfterRun = false,
       configuration = configuration,
     ) {
-      execute(null, "PRAGMA user_version;", 0, null)
+      execute(null, "PRAGMA user_version;", 0, null).await()
     }
 
     schema.version++
@@ -571,7 +569,7 @@ abstract class AndroidxSqliteMigrationTest {
         deleteDbBeforeRun = false,
         configuration = configuration,
       ) {
-        execute(null, "PRAGMA user_version;", 0, null)
+        execute(null, "PRAGMA user_version;", 0, null).await()
       }
     }
 
@@ -602,7 +600,7 @@ abstract class AndroidxSqliteMigrationTest {
   }
 
   @Test
-  fun `foreign key constraint violations during migrations don't fail after the migration if the flag is false`() {
+  fun `foreign key constraint violations during migrations don't fail after the migration if the flag is false`() = runTest {
     val schema = getSchema {
       execute(
         null,
@@ -610,7 +608,7 @@ abstract class AndroidxSqliteMigrationTest {
         |DELETE FROM user WHERE id = 1;
         """.trimMargin(),
         0,
-      )
+      ).await()
     }
     val dbName = Random.nextULong().toHexString()
 
@@ -624,7 +622,7 @@ abstract class AndroidxSqliteMigrationTest {
       onConfigure = {},
       deleteDbAfterRun = false,
     ) {
-      execute(null, "PRAGMA user_version;", 0, null)
+      execute(null, "PRAGMA user_version;", 0, null).await()
     }
 
     schema.version++
@@ -643,23 +641,23 @@ abstract class AndroidxSqliteMigrationTest {
         isForeignKeyConstraintsCheckedAfterCreateOrUpdate = false,
       ),
     ) {
-      execute(null, "PRAGMA user_version;", 0, null)
+      execute(null, "PRAGMA user_version;", 0, null).await()
     }
   }
 
   @Test
-  fun `create is run if migrateEmptySchema is false`() {
-    val schema = object : SqlSchema<QueryResult.Value<Unit>> {
+  fun `create is run if migrateEmptySchema is false`() = runTest {
+    val schema = object : SqlSchema<QueryResult.AsyncValue<Unit>> {
       override var version: Long = 1
 
-      override fun create(driver: SqlDriver) = QueryResult.Unit
+      override fun create(driver: SqlDriver) = QueryResult.AsyncValue {}
 
       override fun migrate(
         driver: SqlDriver,
         oldVersion: Long,
         newVersion: Long,
         vararg callbacks: AfterVersion,
-      ) = QueryResult.Unit
+      ) = QueryResult.AsyncValue {}
     }
 
     val dbName = Random.nextULong().toHexString()
@@ -676,7 +674,7 @@ abstract class AndroidxSqliteMigrationTest {
       onConfigure = {},
       migrateEmptySchema = false,
     ) {
-      execute(null, "PRAGMA user_version;", 0, null)
+      execute(null, "PRAGMA user_version;", 0, null).await()
     }
 
     assertEquals(1, create)
@@ -684,18 +682,18 @@ abstract class AndroidxSqliteMigrationTest {
   }
 
   @Test
-  fun `create is not run if migrateEmptySchema is true`() {
-    val schema = object : SqlSchema<QueryResult.Value<Unit>> {
+  fun `create is not run if migrateEmptySchema is true`() = runTest {
+    val schema = object : SqlSchema<QueryResult.AsyncValue<Unit>> {
       override var version: Long = 1
 
-      override fun create(driver: SqlDriver) = QueryResult.Unit
+      override fun create(driver: SqlDriver) = QueryResult.AsyncValue {}
 
       override fun migrate(
         driver: SqlDriver,
         oldVersion: Long,
         newVersion: Long,
         vararg callbacks: AfterVersion,
-      ) = QueryResult.Unit
+      ) = QueryResult.AsyncValue {}
     }
 
     val dbName = Random.nextULong().toHexString()
@@ -712,7 +710,7 @@ abstract class AndroidxSqliteMigrationTest {
       onConfigure = {},
       migrateEmptySchema = true,
     ) {
-      execute(null, "PRAGMA user_version;", 0, null)
+      execute(null, "PRAGMA user_version;", 0, null).await()
     }
 
     assertEquals(0, create)
@@ -720,7 +718,7 @@ abstract class AndroidxSqliteMigrationTest {
   }
 
   @Test
-  fun `exceptions thrown during migration are propagated to the caller`() {
+  fun `exceptions thrown during migration are propagated to the caller`() = runTest {
     val schema = getSchema {
       throw RuntimeException("Test")
     }
@@ -740,7 +738,7 @@ abstract class AndroidxSqliteMigrationTest {
         isForeignKeyConstraintsCheckedAfterCreateOrUpdate = false,
       ),
     ) {
-      execute(null, "PRAGMA user_version;", 0, null)
+      execute(null, "PRAGMA user_version;", 0, null).await()
     }
 
     schema.version++
@@ -759,14 +757,14 @@ abstract class AndroidxSqliteMigrationTest {
       ),
     ) {
       val message = assertFailsWith<RuntimeException> {
-        execute(null, "PRAGMA user_version;", 0, null)
+        execute(null, "PRAGMA user_version;", 0, null).await()
       }.message
       assertEquals("Test", message)
     }
   }
 
   @Test
-  fun `future queries throw a propagated exception after an exception is thrown during migration`() {
+  fun `future queries throw a propagated exception after an exception is thrown during migration`() = runTest {
     val schema = getSchema {
       throw RuntimeException("Test")
     }
@@ -786,7 +784,7 @@ abstract class AndroidxSqliteMigrationTest {
         isForeignKeyConstraintsCheckedAfterCreateOrUpdate = false,
       ),
     ) {
-      execute(null, "PRAGMA user_version;", 0, null)
+      execute(null, "PRAGMA user_version;", 0, null).await()
     }
 
     schema.version++
@@ -805,7 +803,7 @@ abstract class AndroidxSqliteMigrationTest {
       ),
     ) {
       assertFailsWith<RuntimeException> {
-        execute(null, "PRAGMA user_version;", 0, null)
+        execute(null, "PRAGMA user_version;", 0, null).await()
       }
 
       assertFailsWith<RuntimeException> {
@@ -814,7 +812,7 @@ abstract class AndroidxSqliteMigrationTest {
           sql = "PRAGMA foreign_keys;",
           mapper = { QueryResult.Unit },
           parameters = 0,
-        )
+        ).await()
       }
 
       assertFailsWith<RuntimeException> {
@@ -822,7 +820,7 @@ abstract class AndroidxSqliteMigrationTest {
           identifier = null,
           sql = "PRAGMA foreign_keys = OFF;",
           parameters = 0,
-        )
+        ).await()
       }
     }
   }
