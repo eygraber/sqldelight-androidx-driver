@@ -1,11 +1,15 @@
 package com.eygraber.sqldelight.androidx.driver
 
 import app.cash.sqldelight.Query
+import app.cash.sqldelight.async.coroutines.awaitAsList
+import app.cash.sqldelight.async.coroutines.awaitAsOne
+import app.cash.sqldelight.async.coroutines.awaitAsOneOrNull
 import app.cash.sqldelight.db.AfterVersion
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlCursor
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.db.SqlSchema
+import kotlinx.coroutines.test.runTest
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -24,16 +28,16 @@ abstract class AndroidxSqliteQueryTest {
   private lateinit var driver: SqlDriver
 
   private fun setupDatabase(
-    schema: SqlSchema<QueryResult.Value<Unit>>,
+    schema: SqlSchema<QueryResult.AsyncValue<Unit>>,
   ): SqlDriver = AndroidxSqliteDriver(androidxSqliteTestDriver(), AndroidxSqliteDatabaseType.Memory, schema)
 
   @BeforeTest
   fun setup() {
     driver = setupDatabase(
-      schema = object : SqlSchema<QueryResult.Value<Unit>> {
+      schema = object : SqlSchema<QueryResult.AsyncValue<Unit>> {
         override val version: Long = 1
 
-        override fun create(driver: SqlDriver): QueryResult.Value<Unit> {
+        override fun create(driver: SqlDriver): QueryResult.AsyncValue<Unit> = QueryResult.AsyncValue {
           driver.execute(
             null,
             """
@@ -43,8 +47,7 @@ abstract class AndroidxSqliteQueryTest {
             );
             """.trimIndent(),
             0,
-          )
-          return QueryResult.Unit
+          ).await()
         }
 
         override fun migrate(
@@ -52,7 +55,7 @@ abstract class AndroidxSqliteQueryTest {
           oldVersion: Long,
           newVersion: Long,
           vararg callbacks: AfterVersion,
-        ) = QueryResult.Unit // No-op.
+        ) = QueryResult.AsyncValue {} // No-op.
       },
     )
   }
@@ -63,84 +66,84 @@ abstract class AndroidxSqliteQueryTest {
   }
 
   @Test
-  fun executeAsOne() {
+  fun awaitAsOne() = runTest {
     val data1 = TestData(1, "val1")
     insertTestData(data1)
 
-    assertEquals(data1, testDataQuery().executeAsOne())
+    assertEquals(data1, testDataQuery().awaitAsOne())
   }
 
   @Test
-  fun executeAsOneTwoTimes() {
+  fun awaitAsOneTwoTimes() = runTest {
     val data1 = TestData(1, "val1")
     insertTestData(data1)
 
     val query = testDataQuery()
 
-    assertEquals(query.executeAsOne(), query.executeAsOne())
+    assertEquals(query.awaitAsOne(), query.awaitAsOne())
   }
 
   @Test
-  fun executeAsOneThrowsNpeForNoRows() {
+  fun awaitAsOneThrowsNpeForNoRows() = runTest {
     try {
-      testDataQuery().executeAsOne()
+      testDataQuery().awaitAsOne()
       throw AssertionError("Expected an IllegalStateException")
     } catch(_: NullPointerException) {
     }
   }
 
   @Test
-  fun executeAsOneThrowsIllegalStateExceptionForManyRows() {
+  fun awaitAsOneThrowsIllegalStateExceptionForManyRows() = runTest {
     try {
       insertTestData(TestData(1, "val1"))
       insertTestData(TestData(2, "val2"))
 
-      testDataQuery().executeAsOne()
+      testDataQuery().awaitAsOne()
       throw AssertionError("Expected an IllegalStateException")
     } catch(_: IllegalStateException) {
     }
   }
 
   @Test
-  fun executeAsOneOrNull() {
+  fun awaitAsOneOrNull() = runTest {
     val data1 = TestData(1, "val1")
     insertTestData(data1)
 
     val query = testDataQuery()
-    assertEquals(data1, query.executeAsOneOrNull())
+    assertEquals(data1, query.awaitAsOneOrNull())
   }
 
   @Test
-  fun executeAsOneOrNullReturnsNullForNoRows() {
-    assertNull(testDataQuery().executeAsOneOrNull())
+  fun awaitAsOneOrNullReturnsNullForNoRows() = runTest {
+    assertNull(testDataQuery().awaitAsOneOrNull())
   }
 
   @Test
-  fun executeAsOneOrNullThrowsIllegalStateExceptionForManyRows() {
+  fun awaitAsOneOrNullThrowsIllegalStateExceptionForManyRows() = runTest {
     try {
       insertTestData(TestData(1, "val1"))
       insertTestData(TestData(2, "val2"))
 
-      testDataQuery().executeAsOneOrNull()
+      testDataQuery().awaitAsOneOrNull()
       throw AssertionError("Expected an IllegalStateException")
     } catch(_: IllegalStateException) {
     }
   }
 
   @Test
-  fun executeAsList() {
+  fun awaitAsList() = runTest {
     val data1 = TestData(1, "val1")
     val data2 = TestData(2, "val2")
 
     insertTestData(data1)
     insertTestData(data2)
 
-    assertEquals(listOf(data1, data2), testDataQuery().executeAsList())
+    assertEquals(listOf(data1, data2), testDataQuery().awaitAsList())
   }
 
   @Test
-  fun executeAsListForNoRows() {
-    assertTrue(testDataQuery().executeAsList().isEmpty())
+  fun awaitAsListForNoRows() = runTest {
+    assertTrue(testDataQuery().awaitAsList().isEmpty())
   }
 
   @Test
@@ -168,11 +171,11 @@ abstract class AndroidxSqliteQueryTest {
     assertEquals(0, notifies)
   }
 
-  private fun insertTestData(testData: TestData) {
+  private suspend fun insertTestData(testData: TestData) {
     driver.execute(1, "INSERT INTO test VALUES (?, ?)", 2) {
       bindLong(0, testData.id)
       bindString(1, testData.value)
-    }
+    }.await()
   }
 
   private fun testDataQuery(): Query<TestData> = object : Query<TestData>(mapper) {

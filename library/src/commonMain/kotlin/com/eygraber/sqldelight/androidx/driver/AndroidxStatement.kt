@@ -7,7 +7,7 @@ import app.cash.sqldelight.db.SqlPreparedStatement
 
 internal interface AndroidxStatement : SqlPreparedStatement {
   fun execute()
-  fun <R> executeQuery(mapper: (SqlCursor) -> QueryResult<R>): R
+  suspend fun <R> executeQuery(mapper: suspend (SqlCursor) -> QueryResult<R>): R
   fun reset()
   fun close()
 }
@@ -40,7 +40,7 @@ internal class AndroidxPreparedStatement(
     }
   }
 
-  override fun <R> executeQuery(mapper: (SqlCursor) -> QueryResult<R>): R =
+  override suspend fun <R> executeQuery(mapper: suspend (SqlCursor) -> QueryResult<R>): R =
     throw UnsupportedOperationException()
 
   override fun execute() {
@@ -98,12 +98,12 @@ internal class AndroidxQuery(
 
   override fun execute() = throw UnsupportedOperationException()
 
-  override fun <R> executeQuery(mapper: (SqlCursor) -> QueryResult<R>): R {
+  override suspend fun <R> executeQuery(mapper: suspend (SqlCursor) -> QueryResult<R>): R {
     for(action in binds) {
       requireNotNull(action).invoke(statement)
     }
 
-    return mapper(AndroidxCursor(statement)).value
+    return mapper(AndroidxCursor(statement)).await()
   }
 
   override fun toString() = sql

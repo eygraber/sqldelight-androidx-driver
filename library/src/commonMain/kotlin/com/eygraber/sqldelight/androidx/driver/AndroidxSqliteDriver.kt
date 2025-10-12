@@ -35,7 +35,7 @@ internal expect class TransactionsThreadLocal() {
 public class AndroidxSqliteDriver @VisibleForTesting(otherwise = PRIVATE) internal constructor(
   connectionFactory: AndroidxSqliteConnectionFactory,
   databaseType: AndroidxSqliteDatabaseType,
-  private val schema: SqlSchema<QueryResult.Value<Unit>>,
+  private val schema: SqlSchema<QueryResult.AsyncValue<Unit>>,
   configuration: AndroidxSqliteConfiguration = AndroidxSqliteConfiguration(),
   private val migrateEmptySchema: Boolean = false,
   /**
@@ -79,7 +79,7 @@ public class AndroidxSqliteDriver @VisibleForTesting(otherwise = PRIVATE) intern
   public constructor(
     connectionFactory: AndroidxSqliteConnectionFactory,
     databaseType: AndroidxSqliteDatabaseType,
-    schema: SqlSchema<QueryResult.Value<Unit>>,
+    schema: SqlSchema<QueryResult.AsyncValue<Unit>>,
     configuration: AndroidxSqliteConfiguration = AndroidxSqliteConfiguration(),
     migrateEmptySchema: Boolean = false,
     /**
@@ -135,7 +135,7 @@ public class AndroidxSqliteDriver @VisibleForTesting(otherwise = PRIVATE) intern
   public constructor(
     driver: SQLiteDriver,
     databaseType: AndroidxSqliteDatabaseType,
-    schema: SqlSchema<QueryResult.Value<Unit>>,
+    schema: SqlSchema<QueryResult.AsyncValue<Unit>>,
     configuration: AndroidxSqliteConfiguration = AndroidxSqliteConfiguration(),
     migrateEmptySchema: Boolean = false,
     /**
@@ -276,82 +276,6 @@ public class AndroidxSqliteDriver @VisibleForTesting(otherwise = PRIVATE) intern
     )
   }
 
-  /**
-   * Set the [SqliteJournalMode] to use.
-   *
-   * This function will block until pending schema creation/migration is completed,
-   * and all created connections have been updated.
-   *
-   * Note that this means that this [SqliteJournalMode] **will not** be used for schema creation/migration.
-   *
-   * Please use [AndroidxSqliteConfiguration] or [onConfigure] if a specific [SqliteJournalMode] is needed
-   * during schema creation/migration.
-   *
-   * An exception will be thrown if this is called from within a transaction.
-   */
-  public fun setJournalMode(journalMode: SqliteJournalMode) {
-    check(currentTransaction() == null) {
-      "setJournalMode cannot be called from within a transaction"
-    }
-
-    executingDriverHolder.ensureSchemaIsReady {
-      execute(
-        identifier = null,
-        sql = "PRAGMA journal_mode = ${journalMode.value};",
-        parameters = 0,
-        binders = null,
-      )
-    }
-  }
-
-  /**
-   * Set whether foreign keys are enabled / disabled on the write connection.
-   *
-   * This function will block until pending schema creation/migration is completed.
-   *
-   * Note that foreign keys are always disabled during schema creation/migration.
-   *
-   * An exception will be thrown if this is called from within a transaction.
-   */
-  public fun setForeignKeyConstraintsEnabled(isForeignKeyConstraintsEnabled: Boolean) {
-    check(currentTransaction() == null) {
-      "setForeignKeyConstraintsEnabled cannot be called from within a transaction"
-    }
-
-    val foreignKeys = if(isForeignKeyConstraintsEnabled) "ON" else "OFF"
-    execute(
-      identifier = null,
-      sql = "PRAGMA foreign_keys = $foreignKeys;",
-      parameters = 0,
-      binders = null,
-    )
-  }
-
-  /**
-   * Set the [SqliteSync] to use for the write connection.
-   *
-   * This function will block until pending schema creation/migration is completed.
-   *
-   * Note that this means that this [SqliteSync] **will not** be used for schema creation/migration.
-   *
-   * Please use [AndroidxSqliteConfiguration] or [onConfigure] if a specific [SqliteSync] is needed
-   * during schema creation/migration.
-   *
-   * An exception will be thrown if this is called from within a transaction.
-   */
-  public fun setSync(sync: SqliteSync) {
-    check(currentTransaction() == null) {
-      "setSync cannot be called from within a transaction"
-    }
-
-    execute(
-      identifier = null,
-      sql = "PRAGMA synchronous = ${sync.value};",
-      parameters = 0,
-      binders = null,
-    )
-  }
-
   override fun addListener(vararg queryKeys: String, listener: Query.Listener) {
     synchronized(listenersLock) {
       queryKeys.forEach {
@@ -377,14 +301,14 @@ public class AndroidxSqliteDriver @VisibleForTesting(otherwise = PRIVATE) intern
   }
 
   override fun newTransaction(): QueryResult<Transacter.Transaction> =
-    executingDriverHolder.ensureSchemaIsReady {
-      newTransaction()
+    QueryResult.AsyncValue {
+      executingDriverHolder.ensureSchemaIsReady {
+        newTransaction()
+      }.await()
     }
 
   override fun currentTransaction(): Transacter.Transaction? =
-    executingDriverHolder.ensureSchemaIsReady {
-      currentTransaction()
-    }
+    executingDriverHolder.currentTransaction()
 
   override fun execute(
     identifier: Int?,
@@ -392,8 +316,10 @@ public class AndroidxSqliteDriver @VisibleForTesting(otherwise = PRIVATE) intern
     parameters: Int,
     binders: (SqlPreparedStatement.() -> Unit)?,
   ): QueryResult<Long> =
-    executingDriverHolder.ensureSchemaIsReady {
-      execute(identifier, sql, parameters, binders)
+    QueryResult.AsyncValue {
+      executingDriverHolder.ensureSchemaIsReady {
+        execute(identifier, sql, parameters, binders)
+      }.await()
     }
 
   override fun <R> executeQuery(
@@ -403,8 +329,10 @@ public class AndroidxSqliteDriver @VisibleForTesting(otherwise = PRIVATE) intern
     parameters: Int,
     binders: (SqlPreparedStatement.() -> Unit)?,
   ): QueryResult<R> =
-    executingDriverHolder.ensureSchemaIsReady {
-      executeQuery(identifier, sql, mapper, parameters, binders)
+    QueryResult.AsyncValue {
+      executingDriverHolder.ensureSchemaIsReady {
+        executeQuery(identifier, sql, mapper, parameters, binders)
+      }.await()
     }
 
   /**

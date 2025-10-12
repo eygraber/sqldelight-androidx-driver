@@ -6,13 +6,14 @@ import androidx.sqlite.SQLiteStatement
 import app.cash.sqldelight.db.QueryResult
 import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteConcurrencyModel.MultipleReadersSingleWriter
 import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteConcurrencyModel.SingleReaderWriter
+import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class AndroidxDriverConnectionPoolSetJournalModeTest {
   @Test
-  fun `AndroidxDriverConnectionPool setJournalMode with WAL updates concurrency model`() {
+  fun `AndroidxDriverConnectionPool setJournalMode with WAL updates concurrency model`() = runTest {
     val testConnectionFactory = TestConnectionFactory()
     val configuration = AndroidxSqliteConfiguration(
       concurrencyModel = MultipleReadersSingleWriter(isWal = false, walCount = 2, nonWalCount = 0),
@@ -27,10 +28,10 @@ class AndroidxDriverConnectionPoolSetJournalModeTest {
 
     val result = pool.setJournalMode { connection ->
       // Simulate a journal mode query returning "wal"
-      QueryResult.Value("wal")
+      "wal"
     }
 
-    assertEquals("wal", result.value)
+    assertEquals("wal", result)
 
     // After setting WAL mode, we should be able to get reader connections
     // that are different from the writer connection
@@ -49,7 +50,7 @@ class AndroidxDriverConnectionPoolSetJournalModeTest {
   }
 
   @Test
-  fun `AndroidxDriverConnectionPool setJournalMode with DELETE updates concurrency model`() {
+  fun `AndroidxDriverConnectionPool setJournalMode with DELETE updates concurrency model`() = runTest {
     val testConnectionFactory = TestConnectionFactory()
     val configuration = AndroidxSqliteConfiguration(
       concurrencyModel = MultipleReadersSingleWriter(isWal = true, walCount = 2, nonWalCount = 0),
@@ -78,7 +79,7 @@ class AndroidxDriverConnectionPoolSetJournalModeTest {
   }
 
   @Test
-  fun `AndroidxDriverConnectionPool setJournalMode handles case insensitive WAL detection`() {
+  fun `AndroidxDriverConnectionPool setJournalMode handles case insensitive WAL detection`() = runTest {
     val testConnectionFactory = TestConnectionFactory()
     val configuration = AndroidxSqliteConfiguration(
       concurrencyModel = MultipleReadersSingleWriter(isWal = false, walCount = 2, nonWalCount = 0),
@@ -96,7 +97,7 @@ class AndroidxDriverConnectionPoolSetJournalModeTest {
 
     for(walMode in walVariations) {
       pool.setJournalMode { connection ->
-        QueryResult.Value(walMode)
+        walMode
       }
 
       // Each time, we should be able to get reader connections (indicating WAL mode was detected)
@@ -116,7 +117,7 @@ class AndroidxDriverConnectionPoolSetJournalModeTest {
   }
 
   @Test
-  fun `AndroidxDriverConnectionPool setJournalMode with SingleReaderWriter model`() {
+  fun `AndroidxDriverConnectionPool setJournalMode with SingleReaderWriter model`() = runTest {
     val testConnectionFactory = TestConnectionFactory()
     val configuration = AndroidxSqliteConfiguration(
       concurrencyModel = SingleReaderWriter,
@@ -144,7 +145,7 @@ class AndroidxDriverConnectionPoolSetJournalModeTest {
   }
 
   @Test
-  fun `AndroidxDriverConnectionPool setJournalMode with in-memory database uses SingleReaderWriter`() {
+  fun `AndroidxDriverConnectionPool setJournalMode with in-memory database uses SingleReaderWriter`() = runTest {
     val testConnectionFactory = TestConnectionFactory()
     val configuration = AndroidxSqliteConfiguration(
       concurrencyModel = MultipleReadersSingleWriter(isWal = true, walCount = 2, nonWalCount = 0),
@@ -171,7 +172,7 @@ class AndroidxDriverConnectionPoolSetJournalModeTest {
   }
 
   @Test
-  fun `AndroidxDriverConnectionPool setJournalMode closes and repopulates reader connections`() {
+  fun `AndroidxDriverConnectionPool setJournalMode closes and repopulates reader connections`() = runTest {
     val testConnectionFactory = TestConnectionFactory()
     val configuration = AndroidxSqliteConfiguration(
       concurrencyModel = MultipleReadersSingleWriter(isWal = true, walCount = 2, nonWalCount = 0),
@@ -237,7 +238,7 @@ class AndroidxDriverConnectionPoolSetJournalModeTest {
   }
 }
 
-private fun ConnectionPool.assertReaderAndWriterAreTheSame(
+private suspend fun ConnectionPool.assertReaderAndWriterAreTheSame(
   message: String,
 ) {
   val readerConnection = acquireReaderConnection()

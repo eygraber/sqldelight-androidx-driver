@@ -2,11 +2,8 @@ package com.eygraber.sqldelight.androidx.driver
 
 import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.execSQL
-import app.cash.sqldelight.db.QueryResult
 import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteConcurrencyModel.MultipleReadersSingleWriter
 import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteConcurrencyModel.SingleReaderWriter
-import kotlinx.atomicfu.locks.ReentrantLock
-import kotlinx.atomicfu.locks.withLock
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
@@ -14,16 +11,16 @@ import kotlinx.coroutines.sync.withLock
 import kotlin.concurrent.Volatile
 
 internal interface ConnectionPool : AutoCloseable {
-  fun acquireWriterConnection(): SQLiteConnection
-  fun releaseWriterConnection()
-  fun acquireReaderConnection(): SQLiteConnection
-  fun releaseReaderConnection(connection: SQLiteConnection)
-  fun <R> setJournalMode(
-    executeStatement: (SQLiteConnection) -> QueryResult.Value<R>,
-  ): QueryResult.Value<R>
+  suspend fun acquireWriterConnection(): SQLiteConnection
+  suspend fun releaseWriterConnection()
+  suspend fun acquireReaderConnection(): SQLiteConnection
+  suspend fun releaseReaderConnection(connection: SQLiteConnection)
+  suspend fun <R> setJournalMode(
+    executeStatement: suspend (SQLiteConnection) -> R,
+  ): R
 }
 
-internal inline fun <R> ConnectionPool.withWriterConnection(
+internal suspend inline fun <R> ConnectionPool.withWriterConnection(
   block: SQLiteConnection.() -> R,
 ): R {
   val connection = acquireWriterConnection()
@@ -54,8 +51,7 @@ internal class AndroidxDriverConnectionPool(
   }
 
   private val writerMutex = Mutex()
-
-  private val journalModeLock = ReentrantLock()
+  private val journalModeMutex = Mutex()
 
   @Volatile
   private var concurrencyModel = when {
@@ -73,15 +69,15 @@ internal class AndroidxDriverConnectionPool(
    * Acquires the writer connection, blocking if it's currently in use.
    * @return The writer SQLiteConnection
    */
-  override fun acquireWriterConnection() = runBlocking {
+  override suspend fun acquireWriterConnection(): SQLiteConnection {
     writerMutex.lock()
-    writerConnection
+    return writerConnection
   }
 
   /**
    * Releases the writer connection (mutex unlocks automatically).
    */
-  override fun releaseWriterConnection() {
+  override suspend fun releaseWriterConnection() {
     writerMutex.unlock()
   }
 
@@ -89,43 +85,48 @@ internal class AndroidxDriverConnectionPool(
    * Acquires a reader connection, blocking if none are available.
    * @return A reader SQLiteConnection
    */
-  override fun acquireReaderConnection() = journalModeLock.withLock {
+  override suspend fun acquireReaderConnection() =
     when(concurrencyModel.readerCount) {
       0 -> acquireWriterConnection()
-      else -> runBlocking {
+      else -> {
+        if(journalModeMutex.isLocked) {
+          try {
+            journalModeMutex.lock()
+          } finally {
+            journalModeMutex.unlock()
+          }
+        }
+
         readerChannel.receive().connection.value
       }
     }
-  }
 
   /**
    * Releases a reader connection back to the pool.
    * @param connection The SQLiteConnection to release
    */
-  override fun releaseReaderConnection(connection: SQLiteConnection) {
+  override suspend fun releaseReaderConnection(connection: SQLiteConnection) {
     when(concurrencyModel.readerCount) {
       0 -> releaseWriterConnection()
-      else -> runBlocking {
-        readerChannel.send(
-          ReaderSQLiteConnection(
-            isCreated = true,
-            lazy { connection },
-          ),
-        )
-      }
+      else -> readerChannel.send(
+        ReaderSQLiteConnection(
+          isCreated = true,
+          lazy { connection },
+        ),
+      )
     }
   }
 
-  override fun <R> setJournalMode(
-    executeStatement: (SQLiteConnection) -> QueryResult.Value<R>,
-  ): QueryResult.Value<R> = journalModeLock.withLock {
+  override suspend fun <R> setJournalMode(
+    executeStatement: suspend (SQLiteConnection) -> R,
+  ): R = journalModeMutex.withLock {
     closeAllReaderConnections()
 
     val writer = acquireWriterConnection()
     try {
       // really hope the result is a String...
       val queryResult = executeStatement(writer)
-      val result = queryResult.value?.toString()
+      val result = queryResult?.toString()
 
       (concurrencyModel as? MultipleReadersSingleWriter)?.let { previousModel ->
         val isWal = result.equals("wal", ignoreCase = true)
@@ -148,28 +149,25 @@ internal class AndroidxDriverConnectionPool(
         writerConnection.close()
       }
 
-      repeat(concurrencyModel.readerCount) {
-        val reader = readerChannel.receive()
-        if(reader.isCreated) reader.connection.value.close()
+      journalModeMutex.withLock {
+        repeat(concurrencyModel.readerCount) {
+          val reader = readerChannel.receive()
+          if(reader.isCreated) reader.connection.value.close()
+        }
       }
       readerChannel.close()
     }
   }
 
-  private fun closeAllReaderConnections() {
-    val readerCount = concurrencyModel.readerCount
-    if(readerCount > 0) {
-      runBlocking {
-        repeat(readerCount) {
-          val reader = readerChannel.receive()
-          try {
-            // only apply the pragma to connections that were already created
-            if(reader.isCreated) {
-              reader.connection.value.close()
-            }
-          } catch(_: Throwable) {
-          }
+  private suspend fun closeAllReaderConnections() {
+    repeat(concurrencyModel.readerCount) {
+      val reader = readerChannel.receive()
+      try {
+        // only close connections that were already created
+        if(reader.isCreated) {
+          reader.connection.value.close()
         }
+      } catch(_: Throwable) {
       }
     }
   }
@@ -199,17 +197,17 @@ internal class PassthroughConnectionPool(
     connectionFactory.createConnection(name).withWriterConfiguration(configuration)
   }
 
-  override fun acquireWriterConnection() = delegatedConnection
+  override suspend fun acquireWriterConnection() = delegatedConnection
 
-  override fun releaseWriterConnection() {}
+  override suspend fun releaseWriterConnection() {}
 
-  override fun acquireReaderConnection() = delegatedConnection
+  override suspend fun acquireReaderConnection() = delegatedConnection
 
-  override fun releaseReaderConnection(connection: SQLiteConnection) {}
+  override suspend fun releaseReaderConnection(connection: SQLiteConnection) {}
 
-  override fun <R> setJournalMode(
-    executeStatement: (SQLiteConnection) -> QueryResult.Value<R>,
-  ): QueryResult.Value<R> {
+  override suspend fun <R> setJournalMode(
+    executeStatement: suspend (SQLiteConnection) -> R,
+  ): R {
     val isForeignKeyConstraintsEnabled =
       delegatedConnection
         .prepare("PRAGMA foreign_keys;")
