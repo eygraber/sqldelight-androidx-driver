@@ -17,6 +17,8 @@ dependencies {
 }
 ```
 
+Snapshots can be found [here](https://central.sonatype.org/publish/publish-portal-snapshots/#consuming-via-gradle).
+
 ## Usage
 Assuming the following configuration:
 
