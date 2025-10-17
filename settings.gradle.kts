@@ -3,6 +3,7 @@ import com.eygraber.conventions.repositories.addCommonRepositories
 
 pluginManagement {
   repositories {
+    mavenLocal()
     google {
       content {
         includeGroupByRegex("com\\.google.*")
@@ -36,6 +37,7 @@ dependencyResolutionManagement {
   // repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
 
   repositories {
+    mavenLocal()
     addCommonRepositories(
       includeMavenCentral = true,
       includeMavenCentralSnapshots = true,

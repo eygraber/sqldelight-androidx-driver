@@ -120,7 +120,7 @@ class AndroidxDriverConnectionPoolSetJournalModeTest {
   fun `AndroidxDriverConnectionPool setJournalMode with SingleReaderWriter model`() = runTest {
     val testConnectionFactory = TestConnectionFactory()
     val configuration = AndroidxSqliteConfiguration(
-      concurrencyModel = SingleReaderWriter,
+      concurrencyModel = SingleReaderWriter(),
     )
 
     val pool = AndroidxDriverConnectionPool(
@@ -234,7 +234,7 @@ class AndroidxDriverConnectionPoolSetJournalModeTest {
 
   @Test
   fun `SingleReaderWriter concurrency model is unaffected by WAL`() {
-    assertEquals(0, SingleReaderWriter.readerCount, "SingleReaderWriter should always have 0 readers")
+    assertEquals(0, SingleReaderWriter().readerCount, "SingleReaderWriter should always have 0 readers")
   }
 }
 

@@ -2,15 +2,21 @@ package com.eygraber.sqldelight.androidx.driver
 
 import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.execSQL
+import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteConcurrencyModel.MultipleReaders
 import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteConcurrencyModel.MultipleReadersSingleWriter
 import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteConcurrencyModel.SingleReaderWriter
+import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlin.concurrent.Volatile
+import kotlin.coroutines.coroutineContext
 
 internal interface ConnectionPool : AutoCloseable {
+  suspend fun <T> withReadContext(block: suspend () -> T): T
+  suspend fun <T> withWriteContext(block: suspend () -> T): T
+
   suspend fun acquireWriterConnection(): SQLiteConnection
   suspend fun releaseWriterConnection()
   suspend fun acquireReaderConnection(): SQLiteConnection
@@ -56,7 +62,15 @@ internal class AndroidxDriverConnectionPool(
   @Volatile
   private var concurrencyModel = when {
     isFileBased -> configuration.concurrencyModel
-    else -> SingleReaderWriter
+    else -> when(val model = configuration.concurrencyModel) {
+      is SingleReaderWriter -> model
+      is MultipleReaders -> model
+      is MultipleReadersSingleWriter -> SingleReaderWriter(
+        dispatcher = model.writeDispatcher,
+      ).also {
+        (model.readDispatcher as? AutoCloseable)?.close()
+      }
+    }
   }
 
   private val readerChannel = Channel<ReaderSQLiteConnection>(capacity = Channel.UNLIMITED)
@@ -64,6 +78,22 @@ internal class AndroidxDriverConnectionPool(
   init {
     populateReaderConnectionChannel()
   }
+
+  private var contextId: Long = 0L
+
+  override suspend fun <T> withReadContext(
+    block: suspend () -> T,
+  ): T = concurrencyModel.withReadContext(
+    context = coroutineContext[CoroutineName] ?: CoroutineName("AndroidxDriverConnectionPool-Read-${contextId++}"),
+    block = block,
+  )
+
+  override suspend fun <T> withWriteContext(
+    block: suspend () -> T,
+  ): T = concurrencyModel.withWriteContext(
+    context = coroutineContext[CoroutineName] ?: CoroutineName("AndroidxDriverConnectionPool-Write-${contextId++}"),
+    block = block,
+  )
 
   /**
    * Acquires the writer connection, blocking if it's currently in use.
@@ -130,6 +160,7 @@ internal class AndroidxDriverConnectionPool(
 
       (concurrencyModel as? MultipleReadersSingleWriter)?.let { previousModel ->
         val isWal = result.equals("wal", ignoreCase = true)
+        concurrencyModel.close()
         concurrencyModel = previousModel.copy(isWal = isWal)
       }
 
@@ -157,6 +188,8 @@ internal class AndroidxDriverConnectionPool(
       }
       readerChannel.close()
     }
+
+    concurrencyModel.close()
   }
 
   private suspend fun closeAllReaderConnections() {
@@ -189,13 +222,27 @@ internal class AndroidxDriverConnectionPool(
 internal class PassthroughConnectionPool(
   private val connectionFactory: AndroidxSqliteConnectionFactory,
   nameProvider: () -> String,
-  configuration: AndroidxSqliteConfiguration,
+  private val configuration: AndroidxSqliteConfiguration,
 ) : ConnectionPool {
   private val name by lazy { nameProvider() }
 
   private val delegatedConnection: SQLiteConnection by lazy {
     connectionFactory.createConnection(name).withWriterConfiguration(configuration)
   }
+
+  private var contextId: Long = 0L
+
+  override suspend fun <T> withReadContext(
+    block: suspend () -> T,
+  ): T = configuration.concurrencyModel.withReadContext(
+    context = coroutineContext[CoroutineName] ?: CoroutineName("PassthroughConnectionPool-Read-${contextId++}"),
+  ) { block() }
+
+  override suspend fun <T> withWriteContext(
+    block: suspend () -> T,
+  ): T = configuration.concurrencyModel.withWriteContext(
+    context = coroutineContext[CoroutineName] ?: CoroutineName("PassthroughConnectionPool-Write-${contextId++}"),
+  ) { block() }
 
   override suspend fun acquireWriterConnection() = delegatedConnection
 

@@ -25,6 +25,7 @@ abstract class AndroidxSqliteCallbackTest {
         """.trimMargin(),
         0,
       ).await()
+
       driver.execute(
         1,
         """

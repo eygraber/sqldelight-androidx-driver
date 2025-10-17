@@ -6,7 +6,13 @@ import app.cash.sqldelight.db.AfterVersion
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.db.SqlSchema
+import kotlinx.coroutines.CoroutineName
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.newSingleThreadContext
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
+import kotlin.coroutines.coroutineContext
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -320,6 +326,7 @@ abstract class AndroidxSqliteTransacterTest {
   }
 }
 
+@OptIn(DelicateCoroutinesApi::class, ExperimentalCoroutinesApi::class)
 private class FirstTransactionsFailConnectionPool : ConnectionPool {
   private val firstTransactionFailConnection = object : SQLiteConnection {
     private var isFirstBeginTransaction = true
@@ -339,8 +346,25 @@ private class FirstTransactionsFailConnectionPool : ConnectionPool {
       }
   }
 
+  private var contextId = 0L
+
+  private val dispatcher = newSingleThreadContext("ReadWriteDispatcher")
+
   override fun close() {
     firstTransactionFailConnection.close()
+    dispatcher.close()
+  }
+
+  override suspend fun <T> withReadContext(block: suspend () -> T): T = withContext(
+    context = coroutineName("-Read-${contextId++}") + dispatcher,
+  ) {
+    block()
+  }
+
+  override suspend fun <T> withWriteContext(block: suspend () -> T): T = withContext(
+    context = coroutineName("-Write-${contextId++}") + dispatcher,
+  ) {
+    block()
   }
 
   override suspend fun acquireWriterConnection() = firstTransactionFailConnection
@@ -350,4 +374,8 @@ private class FirstTransactionsFailConnectionPool : ConnectionPool {
   override suspend fun <R> setJournalMode(
     executeStatement: suspend (SQLiteConnection) -> R,
   ): R = error("Don't use")
+
+  private suspend fun coroutineName(
+    suffix: String,
+  ) = coroutineContext[CoroutineName] ?: CoroutineName("FirstTransactionsFailConnectionPool-$suffix")
 }

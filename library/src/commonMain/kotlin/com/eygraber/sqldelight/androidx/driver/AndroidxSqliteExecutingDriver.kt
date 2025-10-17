@@ -5,12 +5,15 @@ import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.execSQL
 import app.cash.sqldelight.Query
 import app.cash.sqldelight.Transacter
+import app.cash.sqldelight.TransactionContextProvider
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlCursor
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.db.SqlPreparedStatement
 import kotlinx.atomicfu.locks.ReentrantLock
 import kotlinx.atomicfu.locks.withLock
+import kotlinx.coroutines.CoroutineName
+import kotlin.coroutines.coroutineContext
 
 internal interface ConnectionHolder {
   val connection: SQLiteConnection
@@ -22,23 +25,36 @@ internal class AndroidxSqliteExecutingDriver(
   private val statementCache: MutableMap<SQLiteConnection, LruCache<Int, AndroidxStatement>>,
   private val statementCacheLock: ReentrantLock,
   private val statementCacheSize: Int,
-  private val transactions: TransactionsThreadLocal,
-) : SqlDriver {
+) : SqlDriver, TransactionContextProvider {
+  private var activeTransaction: Transacter.Transaction? = null
+  private var activeTransactionCoroutineName: CoroutineName? = null
+
+  override suspend fun <R> withTransactionContext(block: suspend () -> R): R =
+    withContext(isWrite = true, block = block)
+
   override fun newTransaction(): QueryResult<Transacter.Transaction> =
     QueryResult.AsyncValue {
-      val enclosing = transactions.get()
-      val transactionConnection = when(enclosing as? ConnectionHolder) {
-        null -> connectionPool.acquireWriterConnection()
-        else -> enclosing.connection
+      if(activeTransactionCoroutineName == null) {
+        activeTransactionCoroutineName = coroutineContext[CoroutineName]
+      }
+
+      val enclosing = activeTransaction
+      val transactionConnection = when {
+        isActiveTransactionOwner() -> when(enclosing as? ConnectionHolder) {
+          null -> connectionPool.acquireWriterConnection()
+          else -> enclosing.connection
+        }
+
+        else -> connectionPool.acquireWriterConnection()
       }
       val transaction = Transaction(enclosing, transactionConnection)
 
-      transactions.set(transaction)
+      activeTransaction = transaction
 
       transaction
     }
 
-  override fun currentTransaction(): Transacter.Transaction? = transactions.get()
+  override fun currentTransaction(): Transacter.Transaction? = activeTransaction
 
   override fun <R> executeQuery(
     identifier: Int?,
@@ -58,24 +74,26 @@ internal class AndroidxSqliteExecutingDriver(
           binders = binders,
         )
       } else {
-        withConnection(
-          isWrite = specialCase == AndroidxSqliteSpecialCase.ForeignKeys ||
-            specialCase == AndroidxSqliteSpecialCase.Synchronous,
-        ) {
-          executeStatement(
-            identifier = identifier,
-            isStatementCacheSkipped = isStatementCacheSkipped,
-            connection = this,
-            createStatement = { c ->
-              AndroidxQuery(
-                sql = sql,
-                statement = c.prepare(sql),
-                argCount = parameters,
-              )
-            },
-            binders = binders,
-            result = { executeQuery(mapper) },
-          )
+        val isWrite = specialCase == AndroidxSqliteSpecialCase.ForeignKeys ||
+          specialCase == AndroidxSqliteSpecialCase.Synchronous
+
+        withContext(isWrite = isWrite) {
+          withConnection(isWrite = isWrite) {
+            executeStatement(
+              identifier = identifier,
+              isStatementCacheSkipped = isStatementCacheSkipped,
+              connection = this,
+              createStatement = { c ->
+                AndroidxQuery(
+                  sql = sql,
+                  statement = c.prepare(sql),
+                  argCount = parameters,
+                )
+              },
+              binders = binders,
+              result = { executeQuery(mapper) },
+            )
+          }
         }
       }
     }
@@ -106,23 +124,25 @@ internal class AndroidxSqliteExecutingDriver(
       AndroidxSqliteSpecialCase.ForeignKeys,
       AndroidxSqliteSpecialCase.Synchronous,
       null,
-      -> withConnection(isWrite = true) {
-        executeStatement(
-          identifier = identifier,
-          isStatementCacheSkipped = isStatementCacheSkipped,
-          connection = this,
-          createStatement = { c ->
-            AndroidxPreparedStatement(
-              sql = sql,
-              statement = c.prepare(sql),
-            )
-          },
-          binders = binders,
-          result = {
-            execute()
-            getTotalChangedRows()
-          },
-        )
+      -> withContext(isWrite = true) {
+        withConnection(isWrite = true) {
+          executeStatement(
+            identifier = identifier,
+            isStatementCacheSkipped = isStatementCacheSkipped,
+            connection = this,
+            createStatement = { c ->
+              AndroidxPreparedStatement(
+                sql = sql,
+                statement = c.prepare(sql),
+              )
+            },
+            binders = binders,
+            result = {
+              execute()
+              getTotalChangedRows()
+            },
+          )
+        }
       }
     }
   }
@@ -132,21 +152,23 @@ internal class AndroidxSqliteExecutingDriver(
     mapper: (SqlCursor) -> QueryResult<R>,
     parameters: Int,
     binders: (SqlPreparedStatement.() -> Unit)?,
-  ) = connectionPool.setJournalMode { connection ->
-    executeStatement(
-      identifier = null,
-      isStatementCacheSkipped = true,
-      connection = connection,
-      createStatement = { c ->
-        AndroidxQuery(
-          sql = sql,
-          statement = c.prepare(sql),
-          argCount = parameters,
-        )
-      },
-      binders = binders,
-      result = { executeQuery(mapper) },
-    )
+  ) = withContext(isWrite = true) {
+    connectionPool.setJournalMode { connection ->
+      executeStatement(
+        identifier = null,
+        isStatementCacheSkipped = true,
+        connection = connection,
+        createStatement = { c ->
+          AndroidxQuery(
+            sql = sql,
+            statement = c.prepare(sql),
+            argCount = parameters,
+          )
+        },
+        binders = binders,
+        result = { executeQuery(mapper) },
+      )
+    }
   }
 
   private suspend fun <T> executeStatement(
@@ -206,11 +228,33 @@ internal class AndroidxSqliteExecutingDriver(
       }
     }
 
+  private suspend inline fun isActiveTransactionOwner() =
+    coroutineContext[CoroutineName].let { name ->
+      name != null && name == activeTransactionCoroutineName
+    }
+
+  private suspend inline fun <R> withContext(
+    isWrite: Boolean,
+    noinline block: suspend () -> R,
+  ) = when {
+    isActiveTransactionOwner() -> block()
+    isWrite -> connectionPool.withWriteContext(block)
+    else -> connectionPool.withReadContext(block)
+  }
+
   private suspend inline fun <R> withConnection(
     isWrite: Boolean,
     block: SQLiteConnection.() -> R,
-  ): R = when(val holder = currentTransaction() as? ConnectionHolder) {
-    null -> {
+  ): R = when {
+    isActiveTransactionOwner() -> {
+      val currentTransaction = currentTransaction()
+      require(currentTransaction is ConnectionHolder) {
+        "Coroutine ${coroutineContext[CoroutineName]} owns the active transaction but it is not a connection holder."
+      }
+      currentTransaction.connection.block()
+    }
+
+    else -> {
       val connection = when {
         isWrite -> connectionPool.acquireWriterConnection()
         else -> connectionPool.acquireReaderConnection()
@@ -225,8 +269,6 @@ internal class AndroidxSqliteExecutingDriver(
         }
       }
     }
-
-    else -> holder.connection.block()
   }
 
   override fun addListener(vararg queryKeys: String, listener: Query.Listener) {}
@@ -254,10 +296,11 @@ internal class AndroidxSqliteExecutingDriver(
               connection.execSQL("ROLLBACK")
             }
           } finally {
+            activeTransactionCoroutineName = null
             connectionPool.releaseWriterConnection()
           }
         }
-        transactions.set(enclosingTransaction)
+        activeTransaction = enclosingTransaction
       }
   }
 }

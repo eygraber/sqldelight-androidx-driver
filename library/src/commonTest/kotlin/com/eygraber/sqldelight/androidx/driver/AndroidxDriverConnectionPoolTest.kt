@@ -101,7 +101,7 @@ class AndroidxDriverConnectionPoolTest {
       nameProvider = { "test.db" },
       isFileBased = true,
       configuration = AndroidxSqliteConfiguration(
-        concurrencyModel = SingleReaderWriter,
+        concurrencyModel = SingleReaderWriter(),
       ),
     )
 
@@ -126,7 +126,7 @@ class AndroidxDriverConnectionPoolTest {
       nameProvider = { "test.db" },
       isFileBased = true,
       configuration = AndroidxSqliteConfiguration(
-        concurrencyModel = SingleReaderWriter,
+        concurrencyModel = SingleReaderWriter(),
       ),
     )
 
@@ -205,7 +205,7 @@ class AndroidxDriverConnectionPoolTest {
       // The newly acquired connection should be one of the connections we saw before
       assertTrue(
         connection === connection1 || connection === connection2,
-        "Released connection should be reused"
+        "Released connection should be reused",
       )
     }
 

@@ -369,6 +369,11 @@ abstract class AndroidxSqliteMigrationTest {
 
     schema.version++
 
+    val newConfiguration = AndroidxSqliteConfiguration(
+      isForeignKeyConstraintsEnabled = true,
+      isForeignKeyConstraintsCheckedAfterCreateOrUpdate = true,
+    )
+
     val exception = assertFailsWith<AndroidxSqliteDriver.ForeignKeyConstraintCheckException> {
       withDatabase(
         schema = schema,
@@ -378,7 +383,7 @@ abstract class AndroidxSqliteMigrationTest {
         onOpen = {},
         onConfigure = {},
         deleteDbBeforeRun = false,
-        configuration = configuration,
+        configuration = newConfiguration,
       ) {
         execute(null, "PRAGMA user_version;", 0, null).await()
       }
@@ -484,6 +489,11 @@ abstract class AndroidxSqliteMigrationTest {
         """.trimMargin()
       }.joinToString(separator = "\n\n")
 
+      val newConfiguration = AndroidxSqliteConfiguration(
+        isForeignKeyConstraintsEnabled = true,
+        isForeignKeyConstraintsCheckedAfterCreateOrUpdate = true,
+      )
+
       val exception = assertFailsWith<AndroidxSqliteDriver.ForeignKeyConstraintCheckException> {
         withDatabase(
           schema = schema,
@@ -493,7 +503,7 @@ abstract class AndroidxSqliteMigrationTest {
           onOpen = {},
           onConfigure = {},
           deleteDbBeforeRun = false,
-          configuration = configuration,
+          configuration = newConfiguration,
         ) {
           execute(null, "PRAGMA user_version;", 0, null).await()
         }
@@ -558,6 +568,12 @@ abstract class AndroidxSqliteMigrationTest {
 
     schema.version++
 
+    val newConfiguration = AndroidxSqliteConfiguration(
+      isForeignKeyConstraintsEnabled = true,
+      isForeignKeyConstraintsCheckedAfterCreateOrUpdate = true,
+      maxMigrationForeignKeyConstraintViolationsToReport = 1,
+    )
+
     val exception = assertFailsWith<AndroidxSqliteDriver.ForeignKeyConstraintCheckException> {
       withDatabase(
         schema = schema,
@@ -567,7 +583,7 @@ abstract class AndroidxSqliteMigrationTest {
         onOpen = {},
         onConfigure = {},
         deleteDbBeforeRun = false,
-        configuration = configuration,
+        configuration = newConfiguration,
       ) {
         execute(null, "PRAGMA user_version;", 0, null).await()
       }

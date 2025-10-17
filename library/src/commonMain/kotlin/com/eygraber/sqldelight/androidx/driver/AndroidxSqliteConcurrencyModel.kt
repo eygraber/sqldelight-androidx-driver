@@ -1,4 +1,16 @@
+@file:OptIn(DelicateCoroutinesApi::class, ExperimentalCoroutinesApi::class)
+
 package com.eygraber.sqldelight.androidx.driver
+
+import kotlinx.coroutines.CloseableCoroutineDispatcher
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.newFixedThreadPoolContext
+import kotlinx.coroutines.newSingleThreadContext
+import kotlinx.coroutines.withContext
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.EmptyCoroutineContext
 
 /**
  * Defines the concurrency model for SQLite database connections, controlling how many
@@ -11,8 +23,18 @@ package com.eygraber.sqldelight.androidx.driver
  *
  * @property readerCount The number of reader connections to maintain in the pool
  */
-public sealed interface AndroidxSqliteConcurrencyModel {
+public sealed interface AndroidxSqliteConcurrencyModel : AutoCloseable {
   public val readerCount: Int
+
+  public suspend fun <R> withReadContext(
+    context: CoroutineContext = EmptyCoroutineContext,
+    block: suspend () -> R,
+  ): R
+
+  public suspend fun <R> withWriteContext(
+    context: CoroutineContext = EmptyCoroutineContext,
+    block: suspend () -> R,
+  ): R
 
   /**
    * Single connection model - one connection handles both reads and writes.
@@ -29,8 +51,28 @@ public sealed interface AndroidxSqliteConcurrencyModel {
    * - Sequential read/write operations only
    * - Suitable for single-threaded or low-concurrency scenarios
    */
-  public data object SingleReaderWriter : AndroidxSqliteConcurrencyModel {
+  public data class SingleReaderWriter(
+    public val dispatcher: CoroutineDispatcher = newSingleThreadContext(
+      name = "AndroidxSqliteSingleReaderWriter",
+    ),
+  ) : AndroidxSqliteConcurrencyModel {
     override val readerCount: Int = 0
+
+    override suspend fun <R> withReadContext(
+      context: CoroutineContext,
+      block: suspend () -> R,
+    ): R = withContext(context + dispatcher) { block() }
+
+    override suspend fun <R> withWriteContext(
+      context: CoroutineContext,
+      block: suspend () -> R,
+    ): R = withContext(context + dispatcher) { block() }
+
+    override fun close() {
+      if(dispatcher is CloseableCoroutineDispatcher) {
+        dispatcher.close()
+      }
+    }
   }
 
   /**
@@ -59,7 +101,27 @@ public sealed interface AndroidxSqliteConcurrencyModel {
    */
   public data class MultipleReaders(
     override val readerCount: Int,
-  ) : AndroidxSqliteConcurrencyModel
+    val dispatcher: CoroutineDispatcher = newFixedThreadPoolContext(
+      nThreads = readerCount,
+      name = "AndroidxSqliteMultipleReadersRead",
+    ),
+  ) : AndroidxSqliteConcurrencyModel {
+    override suspend fun <R> withReadContext(
+      context: CoroutineContext,
+      block: suspend () -> R,
+    ): R = withContext(context + dispatcher) { block() }
+
+    override suspend fun <R> withWriteContext(
+      context: CoroutineContext,
+      block: suspend () -> R,
+    ): R = withContext(context + dispatcher) { block() }
+
+    override fun close() {
+      if(dispatcher is CloseableCoroutineDispatcher) {
+        dispatcher.close()
+      }
+    }
+  }
 
   /**
    * Multiple readers with single writer model - optimized for different journal modes.
@@ -101,10 +163,45 @@ public sealed interface AndroidxSqliteConcurrencyModel {
     public val isWal: Boolean,
     public val nonWalCount: Int = 0,
     public val walCount: Int = 4,
+    public val writeDispatcher: CoroutineDispatcher = newSingleThreadContext(
+      name = "AndroidxSqliteMultipleReadersSingleWriterWrite",
+    ),
+    public val readDispatcher: CoroutineDispatcher = when(
+      val readerCount = when {
+        isWal -> walCount
+        else -> nonWalCount
+      }
+    ) {
+      0 -> writeDispatcher
+      else -> newFixedThreadPoolContext(
+        nThreads = readerCount,
+        name = "AndroidxSqliteMultipleReadersSingleWriterRead",
+      )
+    },
   ) : AndroidxSqliteConcurrencyModel {
     override val readerCount: Int = when {
       isWal -> walCount
       else -> nonWalCount
+    }
+
+    override suspend fun <R> withReadContext(
+      context: CoroutineContext,
+      block: suspend () -> R,
+    ): R = withContext(context + readDispatcher) { block() }
+
+    override suspend fun <R> withWriteContext(
+      context: CoroutineContext,
+      block: suspend () -> R,
+    ): R = withContext(context + writeDispatcher) { block() }
+
+    override fun close() {
+      if(readDispatcher is CloseableCoroutineDispatcher) {
+        readDispatcher.close()
+      }
+
+      if(writeDispatcher is CloseableCoroutineDispatcher) {
+        writeDispatcher.close()
+      }
     }
   }
 }
