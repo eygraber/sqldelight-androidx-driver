@@ -39,9 +39,14 @@ kotlin {
     }
 
     androidInstrumentedTest.dependencies {
+      implementation(libs.androidx.sqliteFramework)
+
       implementation(libs.test.junit)
       implementation(libs.test.androidx.core)
       implementation(libs.test.androidx.runner)
+
+      implementation(libs.test.kotlin)
+      implementation(libs.test.kotlinx.coroutines)
     }
 
     androidUnitTest.dependencies {

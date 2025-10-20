@@ -101,7 +101,7 @@ class AndroidxDriverConnectionPoolTest {
       nameProvider = { "test.db" },
       isFileBased = true,
       configuration = AndroidxSqliteConfiguration(
-        concurrencyModel = SingleReaderWriter,
+        concurrencyModel = SingleReaderWriter(),
       ),
     )
 
@@ -126,7 +126,7 @@ class AndroidxDriverConnectionPoolTest {
       nameProvider = { "test.db" },
       isFileBased = true,
       configuration = AndroidxSqliteConfiguration(
-        concurrencyModel = SingleReaderWriter,
+        concurrencyModel = SingleReaderWriter(),
       ),
     )
 
@@ -174,6 +174,9 @@ class AndroidxDriverConnectionPoolTest {
       ),
     )
 
+    // Acquire the writer connection since reads will fall back to it
+    pool.acquireWriterConnection()
+
     // Acquire all available reader connections
     val connection1 = pool.acquireReaderConnection()
     val connection2 = pool.acquireReaderConnection()
@@ -205,13 +208,14 @@ class AndroidxDriverConnectionPoolTest {
       // The newly acquired connection should be one of the connections we saw before
       assertTrue(
         connection === connection1 || connection === connection2,
-        "Released connection should be reused"
+        "Released connection should be reused",
       )
     }
 
     // Clean up remaining connections
     pool.releaseReaderConnection(connection2)
     blockedConnection?.let { pool.releaseReaderConnection(it) }
+    pool.releaseWriterConnection()
     pool.close()
   }
 

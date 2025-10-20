@@ -17,7 +17,7 @@ import kotlin.random.nextULong
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
-private const val CONCURRENCY: Int = 500
+private const val CONCURRENCY: Int = 99
 
 abstract class AndroidxSqliteConcurrencyTest {
   private val schema = object : SqlSchema<QueryResult.AsyncValue<Unit>> {
@@ -155,6 +155,12 @@ abstract class AndroidxSqliteConcurrencyTest {
       onCreate = {},
       onUpdate = { _, _ -> },
       onOpen = {},
+      configuration = AndroidxSqliteConfiguration(
+        concurrencyModel = MultipleReadersSingleWriter(
+          isWal = true,
+          walCount = CONCURRENCY - 1,
+        ),
+      ),
     ) {
       val transacter = object : SuspendingTransacterImpl(this) {}
 

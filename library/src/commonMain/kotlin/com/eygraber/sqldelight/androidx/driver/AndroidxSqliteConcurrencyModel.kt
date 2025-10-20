@@ -1,5 +1,15 @@
 package com.eygraber.sqldelight.androidx.driver
 
+import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteConcurrencyModel.Companion.CpuCacheHitOptimizedProvider
+import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteConcurrencyModel.Companion.MemoryOptimizedProvider
+import kotlinx.coroutines.CloseableCoroutineDispatcher
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.IO
+import kotlinx.coroutines.newFixedThreadPoolContext
+
 /**
  * Defines the concurrency model for SQLite database connections, controlling how many
  * reader and writer connections are maintained in the connection pool.
@@ -9,10 +19,39 @@ package com.eygraber.sqldelight.androidx.driver
  * - Multiple readers with WAL (Write-Ahead Logging) for better read concurrency
  * - Configurable reader counts for fine-tuned performance
  *
+ * @property dispatcher The [CoroutineDispatcher] used for database operations.
+ * The underlying thread will be blocked for the duration of any database operation
+ * (including the entire transaction for explicit transactions).
+ *
+ * Defaults to the value provided by [MemoryOptimizedProvider], but if you want to optimize for CPU cache hits,
+ * you can use [CpuCacheHitOptimizedProvider].
  * @property readerCount The number of reader connections to maintain in the pool
  */
-public sealed interface AndroidxSqliteConcurrencyModel {
+public sealed interface AndroidxSqliteConcurrencyModel : AutoCloseable {
+  public val dispatcher: CoroutineDispatcher
   public val readerCount: Int
+
+  public companion object {
+    public const val DISPATCHER_NAME: String = "AndroidxSqliteDriver"
+
+    @OptIn(DelicateCoroutinesApi::class, ExperimentalCoroutinesApi::class)
+    public val CpuCacheHitOptimizedProvider: (Int, String) -> CoroutineDispatcher = { parallelism, name ->
+      newFixedThreadPoolContext(
+        nThreads = parallelism,
+        name = name,
+      )
+    }
+
+    public val MemoryOptimizedProvider: (Int, String) -> CoroutineDispatcher = { parallelism, name ->
+      // MemoryOptimizedProvider is "injected" as dispatcherProvider so if
+      // the user wants they can provide their own dispatcherProvider to control the dispatcher used
+      @Suppress("InjectDispatcher")
+      Dispatchers.IO.limitedParallelism(
+        parallelism = parallelism,
+        name = name,
+      )
+    }
+  }
 
   /**
    * Single connection model - one connection handles both reads and writes.
@@ -29,8 +68,18 @@ public sealed interface AndroidxSqliteConcurrencyModel {
    * - Sequential read/write operations only
    * - Suitable for single-threaded or low-concurrency scenarios
    */
-  public data object SingleReaderWriter : AndroidxSqliteConcurrencyModel {
+  public class SingleReaderWriter(
+    dispatcherProvider: (Int, String) -> CoroutineDispatcher = MemoryOptimizedProvider,
+  ) : AndroidxSqliteConcurrencyModel {
     override val readerCount: Int = 0
+    override val dispatcher: CoroutineDispatcher = dispatcherProvider(1, DISPATCHER_NAME)
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    override fun close() {
+      if(dispatcher is CloseableCoroutineDispatcher) {
+        dispatcher.close()
+      }
+    }
   }
 
   /**
@@ -57,9 +106,25 @@ public sealed interface AndroidxSqliteConcurrencyModel {
    *
    * @param readerCount Number of reader connections to maintain (typically 2-8)
    */
-  public data class MultipleReaders(
+  public class MultipleReaders(
     override val readerCount: Int,
-  ) : AndroidxSqliteConcurrencyModel
+    dispatcherProvider: (Int, String) -> CoroutineDispatcher = MemoryOptimizedProvider,
+  ) : AndroidxSqliteConcurrencyModel {
+    init {
+      require(readerCount > 0) {
+        "readerCount must be greater than 0"
+      }
+    }
+
+    override val dispatcher: CoroutineDispatcher = dispatcherProvider(readerCount, DISPATCHER_NAME)
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    override fun close() {
+      if(dispatcher is CloseableCoroutineDispatcher) {
+        dispatcher.close()
+      }
+    }
+  }
 
   /**
    * Multiple readers with single writer model - optimized for different journal modes.
@@ -83,7 +148,7 @@ public sealed interface AndroidxSqliteConcurrencyModel {
    * // For WAL mode
    * MultipleReadersSingleWriter(
    *   isWal = true,
-   *   walCount = 4  // Good default for most applications
+   *   walCount = 3  // Good default for most applications
    * )
    *
    * // For non-WAL mode
@@ -95,16 +160,26 @@ public sealed interface AndroidxSqliteConcurrencyModel {
    *
    * @param isWal Whether WAL (Write-Ahead Logging) journal mode is enabled
    * @param nonWalCount Number of reader connections when WAL is disabled (default: 0)
-   * @param walCount Number of reader connections when WAL is enabled (default: 4)
+   * @param walCount Number of reader connections when WAL is enabled (default: 3)
    */
   public data class MultipleReadersSingleWriter(
     public val isWal: Boolean,
     public val nonWalCount: Int = 0,
-    public val walCount: Int = 4,
+    public val walCount: Int = 3,
+    public val dispatcherProvider: (Int, String) -> CoroutineDispatcher = MemoryOptimizedProvider,
   ) : AndroidxSqliteConcurrencyModel {
     override val readerCount: Int = when {
       isWal -> walCount
       else -> nonWalCount
+    }
+
+    override val dispatcher: CoroutineDispatcher = dispatcherProvider(readerCount + 1, DISPATCHER_NAME)
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    override fun close() {
+      if(dispatcher is CloseableCoroutineDispatcher) {
+        dispatcher.close()
+      }
     }
   }
 }

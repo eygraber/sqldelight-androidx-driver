@@ -7,6 +7,7 @@ import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.SQLiteDriver
 import app.cash.sqldelight.Query
 import app.cash.sqldelight.Transacter
+import app.cash.sqldelight.TransactionContextProvider
 import app.cash.sqldelight.db.AfterVersion
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlCursor
@@ -16,11 +17,7 @@ import app.cash.sqldelight.db.SqlSchema
 import kotlinx.atomicfu.locks.ReentrantLock
 import kotlinx.atomicfu.locks.SynchronizedObject
 import kotlinx.atomicfu.locks.synchronized
-
-internal expect class TransactionsThreadLocal() {
-  internal fun get(): Transacter.Transaction?
-  internal fun set(transaction: Transacter.Transaction?)
-}
+import kotlinx.coroutines.CoroutineDispatcher
 
 /**
  * @param databaseType Specifies the type of the database file
@@ -73,7 +70,7 @@ public class AndroidxSqliteDriver @VisibleForTesting(otherwise = PRIVATE) intern
   private val onOpen: SqlDriver.() -> Unit = {},
   overridingConnectionPool: ConnectionPool? = null,
   vararg migrationCallbacks: AfterVersion,
-) : SqlDriver {
+) : SqlDriver, TransactionContextProvider {
   public constructor(
     connectionFactory: AndroidxSqliteConnectionFactory,
     databaseType: AndroidxSqliteDatabaseType,
@@ -245,7 +242,10 @@ public class AndroidxSqliteDriver @VisibleForTesting(otherwise = PRIVATE) intern
     }
   }
 
-  private val transactions = TransactionsThreadLocal()
+  public data class Dispatchers(
+    val write: CoroutineDispatcher,
+    val read: CoroutineDispatcher = write,
+  )
 
   private val statementsCache = HashMap<SQLiteConnection, LruCache<Int, AndroidxStatement>>()
   private val statementsCacheLock = ReentrantLock()
@@ -260,7 +260,6 @@ public class AndroidxSqliteDriver @VisibleForTesting(otherwise = PRIVATE) intern
       statementCache = statementsCache,
       statementCacheLock = statementsCacheLock,
       statementCacheSize = configuration.cacheSize,
-      transactions = transactions,
       schema = schema,
       isForeignKeyConstraintsEnabled = configuration.isForeignKeyConstraintsEnabled,
       isForeignKeyConstraintsCheckedAfterCreateOrUpdate = configuration.isForeignKeyConstraintsCheckedAfterCreateOrUpdate,
@@ -273,6 +272,11 @@ public class AndroidxSqliteDriver @VisibleForTesting(otherwise = PRIVATE) intern
       migrationCallbacks = migrationCallbacks,
     )
   }
+
+  override suspend fun <R> withTransactionContext(block: suspend () -> R): R =
+    executingDriverHolder.ensureSchemaIsReady {
+      withTransactionContext(block)
+    }
 
   override fun addListener(vararg queryKeys: String, listener: Query.Listener) {
     synchronized(listenersLock) {
@@ -313,12 +317,11 @@ public class AndroidxSqliteDriver @VisibleForTesting(otherwise = PRIVATE) intern
     sql: String,
     parameters: Int,
     binders: (SqlPreparedStatement.() -> Unit)?,
-  ): QueryResult<Long> =
-    QueryResult.AsyncValue {
-      executingDriverHolder.ensureSchemaIsReady {
-        execute(identifier, sql, parameters, binders)
-      }.await()
-    }
+  ): QueryResult<Long> = QueryResult.AsyncValue {
+    executingDriverHolder.ensureSchemaIsReady {
+      execute(identifier, sql, parameters, binders)
+    }.await()
+  }
 
   override fun <R> executeQuery(
     identifier: Int?,
@@ -326,12 +329,11 @@ public class AndroidxSqliteDriver @VisibleForTesting(otherwise = PRIVATE) intern
     mapper: (SqlCursor) -> QueryResult<R>,
     parameters: Int,
     binders: (SqlPreparedStatement.() -> Unit)?,
-  ): QueryResult<R> =
-    QueryResult.AsyncValue {
-      executingDriverHolder.ensureSchemaIsReady {
-        executeQuery(identifier, sql, mapper, parameters, binders)
-      }.await()
-    }
+  ): QueryResult<R> = QueryResult.AsyncValue {
+    executingDriverHolder.ensureSchemaIsReady {
+      executeQuery(identifier, sql, mapper, parameters, binders)
+    }.await()
+  }
 
   /**
    * It is the caller's responsibility to ensure that no threads
