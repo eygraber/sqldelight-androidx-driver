@@ -120,7 +120,7 @@ class AndroidxDriverConnectionPoolSetJournalModeTest {
   fun `AndroidxDriverConnectionPool setJournalMode with SingleReaderWriter model`() = runTest {
     val testConnectionFactory = TestConnectionFactory()
     val configuration = AndroidxSqliteConfiguration(
-      concurrencyModel = SingleReaderWriter,
+      concurrencyModel = SingleReaderWriter(),
     )
 
     val pool = AndroidxDriverConnectionPool(
@@ -185,14 +185,17 @@ class AndroidxDriverConnectionPoolSetJournalModeTest {
       configuration = configuration,
     )
 
+    // Acquire the writer connection since reads will fall back to it
+    pool.acquireWriterConnection()
+
     // First, acquire some reader connections to populate the channel
     val initialReader1 = pool.acquireReaderConnection()
     val initialReader2 = pool.acquireReaderConnection()
     pool.releaseReaderConnection(initialReader1)
     pool.releaseReaderConnection(initialReader2)
 
-    // Track connections that get closed
-    var connectionsClosed = 0
+    // Track connections that get closed (start at -1 to account for the writer connection)
+    var connectionsClosed = -1
     testConnectionFactory.createdConnections.forEach { connection ->
       connection.executedStatements.clear()
     }
@@ -200,6 +203,9 @@ class AndroidxDriverConnectionPoolSetJournalModeTest {
       connection.executedStatements.add("CLOSE")
       connectionsClosed++
     }
+
+    // Release the writer connection to allow setJournalMode to acquire it
+    pool.releaseWriterConnection()
 
     // Change journal mode - this should close existing readers and create new ones
     pool.setJournalMode { connection ->
@@ -234,7 +240,7 @@ class AndroidxDriverConnectionPoolSetJournalModeTest {
 
   @Test
   fun `SingleReaderWriter concurrency model is unaffected by WAL`() {
-    assertEquals(0, SingleReaderWriter.readerCount, "SingleReaderWriter should always have 0 readers")
+    assertEquals(0, SingleReaderWriter().readerCount, "SingleReaderWriter should always have 0 readers")
   }
 }
 

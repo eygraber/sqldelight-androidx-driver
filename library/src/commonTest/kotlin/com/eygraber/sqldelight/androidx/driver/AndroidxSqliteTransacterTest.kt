@@ -6,7 +6,11 @@ import app.cash.sqldelight.db.AfterVersion
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.db.SqlSchema
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.newSingleThreadContext
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -320,6 +324,7 @@ abstract class AndroidxSqliteTransacterTest {
   }
 }
 
+@OptIn(DelicateCoroutinesApi::class, ExperimentalCoroutinesApi::class)
 private class FirstTransactionsFailConnectionPool : ConnectionPool {
   private val firstTransactionFailConnection = object : SQLiteConnection {
     private var isFirstBeginTransaction = true
@@ -339,8 +344,15 @@ private class FirstTransactionsFailConnectionPool : ConnectionPool {
       }
   }
 
+  private val dispatcher = newSingleThreadContext("ReadWriteDispatcher")
+
   override fun close() {
     firstTransactionFailConnection.close()
+    dispatcher.close()
+  }
+
+  override suspend fun <R> runOnDispatcher(block: suspend () -> R) = withContext(dispatcher) {
+    block()
   }
 
   override suspend fun acquireWriterConnection() = firstTransactionFailConnection

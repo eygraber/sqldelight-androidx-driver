@@ -17,7 +17,6 @@ internal class AndroidxSqliteDriverHolder(
   private val statementCache: MutableMap<SQLiteConnection, LruCache<Int, AndroidxStatement>>,
   private val statementCacheLock: ReentrantLock,
   private val statementCacheSize: Int,
-  private val transactions: TransactionsThreadLocal,
   private val schema: SqlSchema<QueryResult.AsyncValue<Unit>>,
   private val isForeignKeyConstraintsEnabled: Boolean,
   private val isForeignKeyConstraintsCheckedAfterCreateOrUpdate: Boolean,
@@ -36,7 +35,6 @@ internal class AndroidxSqliteDriverHolder(
       statementCache = statementCache,
       statementCacheLock = statementCacheLock,
       statementCacheSize = statementCacheSize,
-      transactions = transactions,
     )
   }
 
@@ -56,7 +54,6 @@ internal class AndroidxSqliteDriverHolder(
             statementCache = mutableMapOf(),
             statementCacheLock = statementCacheLock,
             statementCacheSize = 0,
-            transactions = transactions,
           )
 
           AndroidxSqliteConfigurableDriver(executingDriver).onConfigure()
