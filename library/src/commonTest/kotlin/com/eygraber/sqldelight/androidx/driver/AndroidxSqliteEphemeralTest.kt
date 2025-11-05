@@ -1,11 +1,14 @@
 package com.eygraber.sqldelight.androidx.driver
 
 import app.cash.sqldelight.Query
+import app.cash.sqldelight.async.coroutines.awaitAsOne
+import app.cash.sqldelight.async.coroutines.awaitAsOneOrNull
 import app.cash.sqldelight.db.AfterVersion
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlCursor
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.db.SqlSchema
+import kotlinx.coroutines.test.runTest
 import kotlin.random.Random
 import kotlin.random.nextULong
 import kotlin.test.Test
@@ -22,10 +25,10 @@ abstract class AndroidxSqliteEphemeralTest {
     TEMPORARY,
   }
 
-  private val schema = object : SqlSchema<QueryResult.Value<Unit>> {
+  private val schema = object : SqlSchema<QueryResult.AsyncValue<Unit>> {
     override val version: Long = 1
 
-    override fun create(driver: SqlDriver): QueryResult.Value<Unit> {
+    override fun create(driver: SqlDriver): QueryResult.AsyncValue<Unit> = QueryResult.AsyncValue {
       driver.execute(
         null,
         """
@@ -35,8 +38,7 @@ abstract class AndroidxSqliteEphemeralTest {
            );
         """.trimIndent(),
         0,
-      )
-      return QueryResult.Unit
+      ).await()
     }
 
     override fun migrate(
@@ -44,7 +46,7 @@ abstract class AndroidxSqliteEphemeralTest {
       oldVersion: Long,
       newVersion: Long,
       vararg callbacks: AfterVersion,
-    ) = QueryResult.Unit // No-op.
+    ) = QueryResult.AsyncValue {} // No-op.
   }
 
   private val mapper = { cursor: SqlCursor ->
@@ -95,16 +97,16 @@ abstract class AndroidxSqliteEphemeralTest {
   }
 
   @Test
-  fun inMemoryCreatesIndependentDatabase() {
+  fun inMemoryCreatesIndependentDatabase() = runTest {
     val data1 = TestData(1, "val1")
     withDatabase(Type.IN_MEMORY) {
       val driver1 = this
       driver1.insertTestData(data1)
-      assertEquals(data1, driver1.testDataQuery().executeAsOne())
+      assertEquals(data1, driver1.testDataQuery().awaitAsOne())
 
       withDatabase(Type.IN_MEMORY) {
         val driver2 = this
-        assertNull(driver2.testDataQuery().executeAsOneOrNull())
+        assertNull(driver2.testDataQuery().awaitAsOneOrNull())
         driver1.close()
         driver2.close()
       }
@@ -112,16 +114,16 @@ abstract class AndroidxSqliteEphemeralTest {
   }
 
   @Test
-  fun temporaryCreatesIndependentDatabase() {
+  fun temporaryCreatesIndependentDatabase() = runTest {
     val data1 = TestData(1, "val1")
     withDatabase(Type.TEMPORARY) {
       val driver1 = this
       driver1.insertTestData(data1)
-      assertEquals(data1, driver1.testDataQuery().executeAsOne())
+      assertEquals(data1, driver1.testDataQuery().awaitAsOne())
 
       withDatabase(Type.TEMPORARY) {
         val driver2 = this
-        assertNull(driver2.testDataQuery().executeAsOneOrNull())
+        assertNull(driver2.testDataQuery().awaitAsOneOrNull())
         driver1.close()
         driver2.close()
       }
@@ -129,7 +131,7 @@ abstract class AndroidxSqliteEphemeralTest {
   }
 
   @Test
-  fun namedCreatesSharedDatabase() {
+  fun namedCreatesSharedDatabase() = runTest {
     val dbName = Random.nextULong().toHexString()
 
     val data1 = TestData(1, "val1")
@@ -140,7 +142,7 @@ abstract class AndroidxSqliteEphemeralTest {
       val driver1 = this
 
       driver1.insertTestData(data1)
-      assertEquals(data1, driver1.testDataQuery().executeAsOne())
+      assertEquals(data1, driver1.testDataQuery().awaitAsOne())
 
       withDatabase(
         type = Type.NAMED,
@@ -149,9 +151,9 @@ abstract class AndroidxSqliteEphemeralTest {
       ) {
         val driver2 = this
 
-        assertEquals(data1, driver2.testDataQuery().executeAsOne())
+        assertEquals(data1, driver2.testDataQuery().awaitAsOne())
         driver1.close()
-        assertEquals(data1, driver2.testDataQuery().executeAsOne())
+        assertEquals(data1, driver2.testDataQuery().awaitAsOne())
         driver2.close()
 
         withDatabase(
@@ -161,18 +163,18 @@ abstract class AndroidxSqliteEphemeralTest {
         ) {
           val driver3 = this
 
-          assertEquals(data1, driver3.testDataQuery().executeAsOne())
+          assertEquals(data1, driver3.testDataQuery().awaitAsOne())
           driver3.close()
         }
       }
     }
   }
 
-  private fun SqlDriver.insertTestData(testData: TestData) {
+  private suspend fun SqlDriver.insertTestData(testData: TestData) {
     execute(1, "INSERT INTO test VALUES (?, ?)", 2) {
       bindLong(0, testData.id)
       bindString(1, testData.value)
-    }
+    }.await()
   }
 
   private fun SqlDriver.testDataQuery(): Query<TestData> = object : Query<TestData>(mapper) {
