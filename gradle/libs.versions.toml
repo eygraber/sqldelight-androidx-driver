@@ -9,7 +9,7 @@ androidxSqlite = "2.6.1"
 
 atomicfu = "0.29.0"
 
-cashapp-sqldelight = "2.1.0"
+cashapp-sqldelight = "2.2.1"
 
 conventions = "0.0.89"
 
