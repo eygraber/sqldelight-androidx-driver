@@ -5,7 +5,7 @@ android-sdk-compile = "34"
 android-sdk-target = "34"
 android-sdk-min = "23"
 
-androidxSqlite = "2.6.1"
+androidxSqlite = "2.6.2"
 
 atomicfu = "0.29.0"
 
