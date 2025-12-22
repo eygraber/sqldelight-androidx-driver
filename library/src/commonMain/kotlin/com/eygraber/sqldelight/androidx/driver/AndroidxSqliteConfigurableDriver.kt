@@ -26,7 +26,12 @@ public class AndroidxSqliteConfigurableDriver(
     parameters: Int = 0,
     binders: (SqlPreparedStatement.() -> Unit)? = null,
   ) {
-    driver.execute(null, "PRAGMA $pragma;", parameters, binders)
+    driver.execute(
+      identifier = null,
+      sql = "PRAGMA $pragma;",
+      parameters = parameters,
+      binders = binders,
+    )
   }
 
   public fun <R> executePragmaQuery(
@@ -34,5 +39,11 @@ public class AndroidxSqliteConfigurableDriver(
     mapper: (SqlCursor) -> QueryResult<R>,
     parameters: Int = 0,
     binders: (SqlPreparedStatement.() -> Unit)? = null,
-  ): QueryResult<R> = driver.executeQuery(null, "PRAGMA $pragma;", mapper, parameters, binders)
+  ): QueryResult<R> = driver.executeQuery(
+    identifier = null,
+    sql = "PRAGMA $pragma;",
+    mapper = mapper,
+    parameters = parameters,
+    binders = binders,
+  )
 }

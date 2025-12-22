@@ -29,10 +29,10 @@ abstract class AndroidxSqliteEphemeralTest {
       driver.execute(
         null,
         """
-          CREATE TABLE test (
-            id INTEGER NOT NULL PRIMARY KEY,
-            value TEXT NOT NULL
-           );
+        CREATE TABLE test (
+          id INTEGER NOT NULL PRIMARY KEY,
+          value TEXT NOT NULL
+        );
         """.trimIndent(),
         0,
       )
@@ -63,7 +63,7 @@ abstract class AndroidxSqliteEphemeralTest {
   ) {
     val fullDbName = when(dbName) {
       null -> null
-      else -> "${this::class.qualifiedName}.$dbName.db"
+      else -> "${this::class.qualifiedName.orEmpty()}.$dbName.db"
     }
 
     if(fullDbName != null && deleteDbBeforeRun) {
@@ -178,7 +178,13 @@ abstract class AndroidxSqliteEphemeralTest {
   private fun SqlDriver.testDataQuery(): Query<TestData> = object : Query<TestData>(mapper) {
     override fun <R> execute(
       mapper: (SqlCursor) -> QueryResult<R>,
-    ): QueryResult<R> = executeQuery(0, "SELECT * FROM test", mapper, 0, null)
+    ): QueryResult<R> = executeQuery(
+      identifier = 0,
+      sql = "SELECT * FROM test",
+      mapper = mapper,
+      parameters = 0,
+      binders = null,
+    )
 
     override fun addListener(listener: Listener) {
       addListener("test", listener = listener)

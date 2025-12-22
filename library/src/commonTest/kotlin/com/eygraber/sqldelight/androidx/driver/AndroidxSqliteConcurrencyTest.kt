@@ -27,10 +27,10 @@ abstract class AndroidxSqliteConcurrencyTest {
       driver.execute(
         null,
         """
-              |CREATE TABLE test (
-              |  id INTEGER PRIMARY KEY NOT NULL,
-              |  value TEXT DEFAULT NULL
-              |);
+        |CREATE TABLE test (
+        |  id INTEGER PRIMARY KEY NOT NULL,
+        |  value TEXT DEFAULT NULL
+        |);
         """.trimMargin(),
         0,
       )
@@ -116,7 +116,7 @@ abstract class AndroidxSqliteConcurrencyTest {
     ),
     test: SqlDriver.() -> Unit,
   ) {
-    val fullDbName = "${this::class.qualifiedName}.$dbName.db"
+    val fullDbName = "${this::class.qualifiedName.orEmpty()}.$dbName.db"
 
     if(deleteDbBeforeRun) {
       deleteFile(fullDbName)
@@ -181,10 +181,20 @@ abstract class AndroidxSqliteConcurrencyTest {
                 parameters = 0,
                 binders = null,
               ).value
-              execute(null, "INSERT INTO test(id) VALUES (${lastId + 1});", 0, null)
+              execute(
+                identifier = null,
+                sql = "INSERT INTO test(id) VALUES (${lastId + 1});",
+                parameters = 0,
+                binders = null,
+              )
             }
           } else {
-            execute(null, "UPDATE test SET value = 'test' WHERE id = 0;", 0, null)
+            execute(
+              identifier = null,
+              sql = "UPDATE test SET value = 'test' WHERE id = 0;",
+              parameters = 0,
+              binders = null,
+            )
           }
         }
       }
@@ -227,7 +237,13 @@ abstract class AndroidxSqliteConcurrencyTest {
       val jobs = mutableListOf<Job>()
       repeat(CONCURRENCY) {
         jobs += launch(IoDispatcher) {
-          executeQuery(null, "PRAGMA user_version;", { QueryResult.Unit }, 0, null)
+          executeQuery(
+            identifier = null,
+            sql = "PRAGMA user_version;",
+            mapper = { QueryResult.Unit },
+            parameters = 0,
+            binders = null,
+          )
         }
       }
 
@@ -286,7 +302,7 @@ abstract class AndroidxSqliteConcurrencyTest {
       deleteDbAfterRun = false,
     ) {
       launch(IoDispatcher) {
-        execute(null, "PRAGMA user_version;", 0, null)
+        execute(identifier = null, sql = "PRAGMA user_version;", parameters = 0, binders = null)
       }.join()
     }
 

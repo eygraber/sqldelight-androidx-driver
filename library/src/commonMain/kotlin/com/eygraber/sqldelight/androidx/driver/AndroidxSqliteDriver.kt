@@ -1,3 +1,5 @@
+@file:Suppress("ClassOrdering")
+
 package com.eygraber.sqldelight.androidx.driver
 
 import androidx.annotation.VisibleForTesting

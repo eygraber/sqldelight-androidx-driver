@@ -80,7 +80,12 @@ internal class AndroidxSqliteDriverHolder(
               transacter.transaction {
                 when {
                   isCreate -> schema.create(executingDriver).value
-                  else -> schema.migrate(executingDriver, currentVersion, schema.version, *migrationCallbacks).value
+                  else -> schema.migrate(
+                    driver = executingDriver,
+                    oldVersion = currentVersion,
+                    newVersion = schema.version,
+                    callbacks = migrationCallbacks,
+                  ).value
                 }
 
                 val transactionConnection = requireNotNull(
@@ -175,9 +180,9 @@ private fun SQLiteConnection.reportForeignKeyViolations(
       throw AndroidxSqliteDriver.ForeignKeyConstraintCheckException(
         violations = violations,
         message = """
-            |The following foreign key constraints are violated$unprintedDisclaimer:
-            |
-            |${violations.take(5).joinToString(separator = "\n\n")}
+        |The following foreign key constraints are violated$unprintedDisclaimer:
+        |
+        |${violations.take(5).joinToString(separator = "\n\n")}
         """.trimMargin(),
       )
     }

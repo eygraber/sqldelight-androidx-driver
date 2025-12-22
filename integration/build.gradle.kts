@@ -4,7 +4,7 @@ import org.jetbrains.kotlin.gradle.dsl.ExplicitApiMode
 plugins {
   id("com.eygraber.conventions-kotlin-multiplatform")
   id("com.eygraber.conventions-android-library")
-  id("com.eygraber.conventions-detekt")
+  id("com.eygraber.conventions-detekt2")
   alias(libs.plugins.sqldelight)
 }
 

@@ -125,7 +125,7 @@ internal class AndroidxDriverConnectionPool(
     try {
       // really hope the result is a String...
       val queryResult = executeStatement(writer)
-      val result = queryResult.value.toString()
+      val result = queryResult.value?.toString()
 
       (concurrencyModel as? MultipleReadersSingleWriter)?.let { previousModel ->
         val isWal = result.equals("wal", ignoreCase = true)
