@@ -86,6 +86,6 @@ actual inline fun <T> assertChecksThreadConfinement(
   semaphore.acquire()
   thread.interrupt()
   Assert.assertThrows(IllegalStateException::class.java) {
-    result!!.getOrThrow()
+    result?.getOrThrow()
   }
 }

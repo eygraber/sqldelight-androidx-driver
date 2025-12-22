@@ -120,7 +120,7 @@ abstract class AndroidxSqliteCreationTest {
     migrateEmptySchema: Boolean = false,
     test: SqlDriver.() -> Unit,
   ) {
-    val fullDbName = "${this::class.qualifiedName}.$dbName.db"
+    val fullDbName = "${this::class.qualifiedName.orEmpty()}.$dbName.db"
 
     if(deleteDbBeforeRun) {
       deleteFile(fullDbName)
@@ -217,7 +217,7 @@ abstract class AndroidxSqliteCreationTest {
       onOpen = {},
       onConfigure = {},
     ) {
-      execute(null, "PRAGMA user_version;", 0, null)
+      execute(identifier = null, sql = "PRAGMA user_version;", parameters = 0, binders = null)
     }
   }
 
@@ -280,26 +280,26 @@ abstract class AndroidxSqliteCreationTest {
         onConfigure = {},
         configuration = configuration,
       ) {
-        execute(null, "PRAGMA user_version;", 0, null)
+        execute(identifier = null, sql = "PRAGMA user_version;", parameters = 0, binders = null)
       }
     }
 
     assertEquals(
       expected = exception.message,
       actual = """
-        |The following foreign key constraints are violated:
-        |
-        |ForeignKeyConstraintViolation:
-        |  Constraint index: 0
-        |  Referencing table: post
-        |  Referencing rowId: 1
-        |  Referenced table: user
-        |
-        |ForeignKeyConstraintViolation:
-        |  Constraint index: 0
-        |  Referencing table: post
-        |  Referencing rowId: 2
-        |  Referenced table: user
+      |The following foreign key constraints are violated:
+      |
+      |ForeignKeyConstraintViolation:
+      |  Constraint index: 0
+      |  Referencing table: post
+      |  Referencing rowId: 1
+      |  Referenced table: user
+      |
+      |ForeignKeyConstraintViolation:
+      |  Constraint index: 0
+      |  Referencing table: post
+      |  Referencing rowId: 2
+      |  Referenced table: user
       """.trimMargin(),
     )
 
@@ -379,7 +379,7 @@ abstract class AndroidxSqliteCreationTest {
         onConfigure = {},
         configuration = configuration,
       ) {
-        execute(null, "PRAGMA user_version;", 0, null)
+        execute(identifier = null, sql = "PRAGMA user_version;", parameters = 0, binders = null)
       }
     }
 
@@ -388,9 +388,9 @@ abstract class AndroidxSqliteCreationTest {
     assertEquals(
       expected = exception.message,
       actual = """
-               |The following foreign key constraints are violated ($expectedNotShown not shown):
-               |
-               |$messageViolations
+      |The following foreign key constraints are violated ($expectedNotShown not shown):
+      |
+      |$messageViolations
       """.trimMargin(),
     )
 
@@ -436,20 +436,20 @@ abstract class AndroidxSqliteCreationTest {
         onConfigure = {},
         configuration = configuration,
       ) {
-        execute(null, "PRAGMA user_version;", 0, null)
+        execute(identifier = null, sql = "PRAGMA user_version;", parameters = 0, binders = null)
       }
     }
 
     assertEquals(
       expected = exception.message,
       actual = """
-        |The following foreign key constraints are violated:
-        |
-        |ForeignKeyConstraintViolation:
-        |  Constraint index: 0
-        |  Referencing table: post
-        |  Referencing rowId: 1
-        |  Referenced table: user
+      |The following foreign key constraints are violated:
+      |
+      |ForeignKeyConstraintViolation:
+      |  Constraint index: 0
+      |  Referencing table: post
+      |  Referencing rowId: 1
+      |  Referenced table: user
       """.trimMargin(),
     )
 
@@ -492,7 +492,7 @@ abstract class AndroidxSqliteCreationTest {
         isForeignKeyConstraintsCheckedAfterCreateOrUpdate = false,
       ),
     ) {
-      execute(null, "PRAGMA user_version;", 0, null)
+      execute(identifier = null, sql = "PRAGMA user_version;", parameters = 0, binders = null)
     }
   }
 
@@ -516,7 +516,7 @@ abstract class AndroidxSqliteCreationTest {
       ),
     ) {
       val message = assertFailsWith<RuntimeException> {
-        execute(null, "PRAGMA user_version;", 0, null)
+        execute(identifier = null, sql = "PRAGMA user_version;", parameters = 0, binders = null)
       }.message
 
       assertEquals("Test", message)
@@ -543,7 +543,7 @@ abstract class AndroidxSqliteCreationTest {
       ),
     ) {
       assertFailsWith<RuntimeException> {
-        execute(null, "PRAGMA user_version;", 0, null)
+        execute(identifier = null, sql = "PRAGMA user_version;", parameters = 0, binders = null)
       }
 
       assertFailsWith<RuntimeException> {

@@ -37,10 +37,10 @@ abstract class AndroidxSqliteQueryTest {
           driver.execute(
             null,
             """
-              CREATE TABLE test (
-                id INTEGER NOT NULL PRIMARY KEY,
-                value TEXT NOT NULL
-               );
+            CREATE TABLE test (
+              id INTEGER NOT NULL PRIMARY KEY,
+              value TEXT NOT NULL
+            );
             """.trimIndent(),
             0,
           )
@@ -178,7 +178,13 @@ abstract class AndroidxSqliteQueryTest {
   private fun testDataQuery(): Query<TestData> = object : Query<TestData>(mapper) {
     override fun <R> execute(
       mapper: (SqlCursor) -> QueryResult<R>,
-    ): QueryResult<R> = driver.executeQuery(0, "SELECT * FROM test", mapper, 0, null)
+    ): QueryResult<R> = driver.executeQuery(
+      identifier = 0,
+      sql = "SELECT * FROM test",
+      mapper = mapper,
+      parameters = 0,
+      binders = null,
+    )
 
     override fun addListener(listener: Listener) {
       driver.addListener("test", listener = listener)

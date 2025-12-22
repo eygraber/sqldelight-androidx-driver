@@ -2,6 +2,7 @@ package com.eygraber.sqldelight.androidx.driver
 
 import app.cash.sqldelight.Transacter
 
+@Suppress("ExplicitCollectionElementAccessMethod", "UnusedPrivateProperty")
 internal actual class TransactionsThreadLocal actual constructor() {
   private val transactions = ThreadLocal<Transacter.Transaction>()
 

@@ -1,24 +1,27 @@
+import com.android.build.api.dsl.androidLibrary
 import com.android.build.api.variant.HasUnitTest
 import org.jetbrains.kotlin.gradle.dsl.ExplicitApiMode
 
 plugins {
+  id("com.android.lint")
   id("com.eygraber.conventions-kotlin-multiplatform")
-  id("com.eygraber.conventions-android-library")
-  id("com.eygraber.conventions-detekt")
+  id("com.eygraber.conventions-android-kmp-library")
+  id("com.eygraber.conventions-detekt2")
   alias(libs.plugins.sqldelight)
-}
-
-android {
-  namespace = "com.eygraber.sqldelight.androidx.driver.integration"
 }
 
 kotlin {
   defaultKmpTargets(
     project = project,
+    androidNamespace = "com.eygraber.sqldelight.androidx.driver.integration",
   )
 
+  androidLibrary {
+    withHostTest {}
+  }
+
   sourceSets {
-    androidUnitTest.dependencies {
+    named("androidHostTest").dependencies {
       implementation(libs.test.junit)
       implementation(libs.test.androidx.core)
       implementation(libs.test.robolectric)

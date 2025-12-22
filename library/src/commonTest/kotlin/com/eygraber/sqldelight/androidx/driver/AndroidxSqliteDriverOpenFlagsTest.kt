@@ -25,23 +25,23 @@ abstract class AndroidxSqliteDriverOpenFlagsTest {
       driver.execute(
         0,
         """
-              |CREATE TABLE test (
-              |  id INTEGER PRIMARY KEY,
-              |  value TEXT
-              |);
+        |CREATE TABLE test (
+        |  id INTEGER PRIMARY KEY,
+        |  value TEXT
+        |);
         """.trimMargin(),
         0,
       )
       driver.execute(
         1,
         """
-              |CREATE TABLE nullability_test (
-              |  id INTEGER PRIMARY KEY,
-              |  integer_value INTEGER,
-              |  text_value TEXT,
-              |  blob_value BLOB,
-              |  real_value REAL
-              |);
+        |CREATE TABLE nullability_test (
+        |  id INTEGER PRIMARY KEY,
+        |  integer_value INTEGER,
+        |  text_value TEXT,
+        |  blob_value BLOB,
+        |  real_value REAL
+        |);
         """.trimMargin(),
         0,
       )
@@ -68,7 +68,7 @@ abstract class AndroidxSqliteDriverOpenFlagsTest {
         cursor.next()
         QueryResult.Value(cursor.getLong(0))
       }
-      driver.executeQuery(null, "SELECT changes()", mapper, 0).value
+      driver.executeQuery(identifier = null, sql = "SELECT changes()", mapper = mapper, parameters = 0).value
     }
 
   @BeforeTest
@@ -86,11 +86,11 @@ abstract class AndroidxSqliteDriverOpenFlagsTest {
   @Test
   fun insertCanRunMultipleTimes() {
     val insert = { binders: SqlPreparedStatement.() -> Unit ->
-      driver.execute(2, "INSERT INTO test VALUES (?, ?);", 2, binders)
+      driver.execute(identifier = 2, sql = "INSERT INTO test VALUES (?, ?);", parameters = 2, binders = binders)
     }
 
     fun query(mapper: (SqlCursor) -> QueryResult<Unit>) {
-      driver.executeQuery(3, "SELECT * FROM test", mapper, 0)
+      driver.executeQuery(identifier = 3, sql = "SELECT * FROM test", mapper = mapper, parameters = 0)
     }
 
     query { cursor ->
@@ -146,7 +146,7 @@ abstract class AndroidxSqliteDriverOpenFlagsTest {
   @Test
   fun queryCanRunMultipleTimes() {
     val insert = { binders: SqlPreparedStatement.() -> Unit ->
-      driver.execute(2, "INSERT INTO test VALUES (?, ?);", 2, binders)
+      driver.execute(identifier = 2, sql = "INSERT INTO test VALUES (?, ?);", parameters = 2, binders = binders)
     }
 
     insert {
@@ -161,7 +161,13 @@ abstract class AndroidxSqliteDriverOpenFlagsTest {
     assertEquals(1, changes())
 
     fun query(binders: SqlPreparedStatement.() -> Unit, mapper: (SqlCursor) -> QueryResult<Unit>) {
-      driver.executeQuery(6, "SELECT * FROM test WHERE value = ?", mapper, 1, binders)
+      driver.executeQuery(
+        identifier = 6,
+        sql = "SELECT * FROM test WHERE value = ?",
+        mapper = mapper,
+        parameters = 1,
+        binders = binders,
+      )
     }
 
     query(
@@ -193,7 +199,12 @@ abstract class AndroidxSqliteDriverOpenFlagsTest {
   @Test
   fun sqlResultSetGettersReturnNullIfTheColumnValuesAreNULL() {
     val insert = { binders: SqlPreparedStatement.() -> Unit ->
-      driver.execute(7, "INSERT INTO nullability_test VALUES (?, ?, ?, ?, ?);", 5, binders)
+      driver.execute(
+        identifier = 7,
+        sql = "INSERT INTO nullability_test VALUES (?, ?, ?, ?, ?);",
+        parameters = 5,
+        binders = binders,
+      )
     }
     insert {
       bindLong(0, 1)
@@ -213,6 +224,6 @@ abstract class AndroidxSqliteDriverOpenFlagsTest {
       assertNull(cursor.getDouble(4))
       QueryResult.Unit
     }
-    driver.executeQuery(8, "SELECT * FROM nullability_test", mapper, 0)
+    driver.executeQuery(identifier = 8, sql = "SELECT * FROM nullability_test", mapper = mapper, parameters = 0)
   }
 }

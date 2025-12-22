@@ -343,7 +343,12 @@ class ConnectionPoolTest {
 
     // Create pool but don't call setJournalMode directly to avoid hanging
     // Instead test the logic indirectly by creating a similar scenario
-    val pool = AndroidxDriverConnectionPool(factory, { "test.db" }, true, config)
+    val pool = AndroidxDriverConnectionPool(
+      connectionFactory = factory,
+      nameProvider = { "test.db" },
+      isFileBased = true,
+      configuration = config,
+    )
 
     // Test that we can create the pool without hanging
     // The pool creation should trigger connection creation

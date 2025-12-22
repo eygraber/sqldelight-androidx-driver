@@ -17,23 +17,23 @@ abstract class AndroidxSqliteCallbackTest {
       driver.execute(
         0,
         """
-              |CREATE TABLE test (
-              |  id INTEGER PRIMARY KEY,
-              |  value TEXT
-              |);
+        |CREATE TABLE test (
+        |  id INTEGER PRIMARY KEY,
+        |  value TEXT
+        |);
         """.trimMargin(),
         0,
       )
       driver.execute(
         1,
         """
-              |CREATE TABLE nullability_test (
-              |  id INTEGER PRIMARY KEY,
-              |  integer_value INTEGER,
-              |  text_value TEXT,
-              |  blob_value BLOB,
-              |  real_value REAL
-              |);
+        |CREATE TABLE nullability_test (
+        |  id INTEGER PRIMARY KEY,
+        |  integer_value INTEGER,
+        |  text_value TEXT,
+        |  blob_value BLOB,
+        |  real_value REAL
+        |);
         """.trimMargin(),
         0,
       )
@@ -55,23 +55,23 @@ abstract class AndroidxSqliteCallbackTest {
       driver.execute(
         0,
         """
-              |CREATE TABLE test (
-              |  id INTEGER PRIMARY KEY,
-              |  value TEXT
-              |);
+        |CREATE TABLE test (
+        |  id INTEGER PRIMARY KEY,
+        |  value TEXT
+        |);
         """.trimMargin(),
         0,
       )
       driver.execute(
         1,
         """
-              |CREATE TABLE nullability_test (
-              |  id INTEGER PRIMARY KEY,
-              |  integer_value INTEGER,
-              |  text_value TEXT,
-              |  blob_value BLOB,
-              |  real_value REAL
-              |);
+        |CREATE TABLE nullability_test (
+        |  id INTEGER PRIMARY KEY,
+        |  integer_value INTEGER,
+        |  text_value TEXT,
+        |  blob_value BLOB,
+        |  real_value REAL
+        |);
         """.trimMargin(),
         0,
       )
@@ -88,10 +88,10 @@ abstract class AndroidxSqliteCallbackTest {
         driver.execute(
           0,
           """
-              |CREATE TABLE test2 (
-              |  id INTEGER PRIMARY KEY,
-              |  value TEXT
-              |);
+          |CREATE TABLE test2 (
+          |  id INTEGER PRIMARY KEY,
+          |  value TEXT
+          |);
           """.trimMargin(),
           0,
         )
@@ -111,7 +111,7 @@ abstract class AndroidxSqliteCallbackTest {
     deleteDbAfterRun: Boolean = true,
     test: SqlDriver.() -> Unit,
   ) {
-    val fullDbName = "${this::class.qualifiedName}.$dbName.db"
+    val fullDbName = "${this::class.qualifiedName.orEmpty()}.$dbName.db"
 
     if(deleteDbBeforeRun) {
       deleteFile(fullDbName)
