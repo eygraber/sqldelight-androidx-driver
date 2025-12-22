@@ -1,8 +1,8 @@
 package com.eygraber.sqldelight.androidx.driver
 
 import androidx.sqlite.SQLiteException
-import app.cash.sqldelight.Transacter
-import app.cash.sqldelight.TransacterImpl
+import app.cash.sqldelight.SuspendingTransacter
+import app.cash.sqldelight.SuspendingTransacterImpl
 import app.cash.sqldelight.db.AfterVersion
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlCursor
@@ -10,6 +10,7 @@ import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.db.SqlPreparedStatement
 import app.cash.sqldelight.db.SqlSchema
 import app.cash.sqldelight.db.use
+import kotlinx.coroutines.test.runTest
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -22,10 +23,10 @@ import kotlin.test.assertTrue
 
 abstract class AndroidxSqliteDriverTest {
   private lateinit var driver: SqlDriver
-  private val schema = object : SqlSchema<QueryResult.Value<Unit>> {
+  private val schema = object : SqlSchema<QueryResult.AsyncValue<Unit>> {
     override val version: Long = 1
 
-    override fun create(driver: SqlDriver): QueryResult.Value<Unit> {
+    override fun create(driver: SqlDriver): QueryResult.AsyncValue<Unit> = QueryResult.AsyncValue {
       driver.execute(
         0,
         """
@@ -35,7 +36,7 @@ abstract class AndroidxSqliteDriverTest {
         |);
         """.trimMargin(),
         0,
-      )
+      ).await()
       driver.execute(
         1,
         """
@@ -48,8 +49,7 @@ abstract class AndroidxSqliteDriverTest {
         |);
         """.trimMargin(),
         0,
-      )
-      return QueryResult.Unit
+      ).await()
     }
 
     override fun migrate(
@@ -57,37 +57,44 @@ abstract class AndroidxSqliteDriverTest {
       oldVersion: Long,
       newVersion: Long,
       vararg callbacks: AfterVersion,
-    ) = QueryResult.Unit
+    ) = QueryResult.AsyncValue {}
   }
-  private var transacter: Transacter? = null
+  private var transacter: SuspendingTransacter? = null
 
   private fun setupDatabase(
-    schema: SqlSchema<QueryResult.Value<Unit>>,
+    schema: SqlSchema<QueryResult.AsyncValue<Unit>>,
   ): SqlDriver = AndroidxSqliteDriver(androidxSqliteTestDriver(), AndroidxSqliteDatabaseType.Memory, schema)
 
-  private fun useSingleItemCacheDriver(block: (AndroidxSqliteDriver) -> Unit) {
+  private suspend fun useSingleItemCacheDriver(block: suspend (AndroidxSqliteDriver) -> Unit) {
     AndroidxSqliteDriver(
       driver = androidxSqliteTestDriver(),
       databaseType = AndroidxSqliteDatabaseType.Memory,
       schema = schema,
       configuration = AndroidxSqliteConfiguration(cacheSize = 1),
-    ).use(block)
+    ).use {
+      block(it)
+    }
   }
 
-  private fun changes(): Long? =
+  private suspend fun changes(): Long? =
     // wrap in a transaction to ensure read happens on transaction thread/connection
     transacter?.transactionWithResult {
       val mapper: (SqlCursor) -> QueryResult<Long?> = { cursor ->
         cursor.next()
         QueryResult.Value(cursor.getLong(0))
       }
-      driver.executeQuery(identifier = null, sql = "SELECT changes()", mapper = mapper, parameters = 0).value
+      driver.executeQuery(
+        identifier = null,
+        sql = "SELECT changes()",
+        mapper = mapper,
+        parameters = 0,
+      ).await()
     }
 
   @BeforeTest
   fun setup() {
     driver = setupDatabase(schema = schema)
-    transacter = object : TransacterImpl(driver) {}
+    transacter = object : SuspendingTransacterImpl(driver) {}
   }
 
   @AfterTest
@@ -97,18 +104,28 @@ abstract class AndroidxSqliteDriverTest {
   }
 
   @Test
-  fun insertCanRunMultipleTimes() {
-    val insert = { binders: SqlPreparedStatement.() -> Unit ->
-      driver.execute(identifier = 2, sql = "INSERT INTO test VALUES (?, ?);", parameters = 2, binders = binders)
+  fun insertCanRunMultipleTimes() = runTest {
+    suspend fun insert(binders: SqlPreparedStatement.() -> Unit) {
+      driver.execute(
+        identifier = 2,
+        sql = "INSERT INTO test VALUES (?, ?);",
+        parameters = 2,
+        binders = binders,
+      ).await()
     }
 
-    fun query(mapper: (SqlCursor) -> QueryResult<Unit>) {
-      driver.executeQuery(identifier = 3, sql = "SELECT * FROM test", mapper = mapper, parameters = 0)
+    suspend fun query(mapper: (SqlCursor) -> QueryResult<Unit>) {
+      driver.executeQuery(
+        identifier = 3,
+        sql = "SELECT * FROM test",
+        mapper = mapper,
+        parameters = 0,
+      ).await()
     }
 
     query { cursor ->
       assertFalse(cursor.next().value)
-      QueryResult.Unit
+      QueryResult.AsyncValue {}
     }
 
     insert {
@@ -119,7 +136,7 @@ abstract class AndroidxSqliteDriverTest {
     query { cursor ->
       assertTrue(cursor.next().value)
       assertFalse(cursor.next().value)
-      QueryResult.Unit
+      QueryResult.AsyncValue {}
     }
 
     assertEquals(1, changes())
@@ -128,7 +145,7 @@ abstract class AndroidxSqliteDriverTest {
       assertTrue(cursor.next().value)
       assertEquals(1, cursor.getLong(0))
       assertEquals("Alec", cursor.getString(1))
-      QueryResult.Unit
+      QueryResult.AsyncValue {}
     }
 
     insert {
@@ -144,22 +161,27 @@ abstract class AndroidxSqliteDriverTest {
       assertTrue(cursor.next().value)
       assertEquals(2, cursor.getLong(0))
       assertEquals("Jake", cursor.getString(1))
-      QueryResult.Unit
+      QueryResult.AsyncValue {}
     }
 
-    driver.execute(5, "DELETE FROM test", 0)
+    driver.execute(5, "DELETE FROM test", 0).await()
     assertEquals(2, changes())
 
     query { cursor ->
       assertFalse(cursor.next().value)
-      QueryResult.Unit
+      QueryResult.AsyncValue {}
     }
   }
 
   @Test
-  fun queryCanRunMultipleTimes() {
-    val insert = { binders: SqlPreparedStatement.() -> Unit ->
-      driver.execute(identifier = 2, sql = "INSERT INTO test VALUES (?, ?);", parameters = 2, binders = binders)
+  fun queryCanRunMultipleTimes() = runTest {
+    suspend fun insert(binders: SqlPreparedStatement.() -> Unit) {
+      driver.execute(
+        identifier = 2,
+        sql = "INSERT INTO test VALUES (?, ?);",
+        parameters = 2,
+        binders = binders,
+      ).await()
     }
 
     insert {
@@ -173,14 +195,14 @@ abstract class AndroidxSqliteDriverTest {
     }
     assertEquals(1, changes())
 
-    fun query(binders: SqlPreparedStatement.() -> Unit, mapper: (SqlCursor) -> QueryResult<Unit>) {
+    suspend fun query(binders: SqlPreparedStatement.() -> Unit, mapper: (SqlCursor) -> QueryResult<Unit>) {
       driver.executeQuery(
         identifier = 6,
         sql = "SELECT * FROM test WHERE value = ?",
         mapper = mapper,
         parameters = 1,
         binders = binders,
-      )
+      ).await()
     }
 
     query(
@@ -191,7 +213,7 @@ abstract class AndroidxSqliteDriverTest {
         assertTrue(cursor.next().value)
         assertEquals(2, cursor.getLong(0))
         assertEquals("Jake", cursor.getString(1))
-        QueryResult.Unit
+        QueryResult.AsyncValue {}
       },
     )
 
@@ -204,21 +226,22 @@ abstract class AndroidxSqliteDriverTest {
         assertTrue(cursor.next().value)
         assertEquals(2, cursor.getLong(0))
         assertEquals("Jake", cursor.getString(1))
-        QueryResult.Unit
+        QueryResult.AsyncValue {}
       },
     )
   }
 
   @Test
-  fun sqlResultSetGettersReturnNullIfTheColumnValuesAreNULL() {
-    val insert = { binders: SqlPreparedStatement.() -> Unit ->
+  fun sqlResultSetGettersReturnNullIfTheColumnValuesAreNULL() = runTest {
+    suspend fun insert(binders: SqlPreparedStatement.() -> Unit) {
       driver.execute(
         identifier = 7,
         sql = "INSERT INTO nullability_test VALUES (?, ?, ?, ?, ?);",
         parameters = 5,
         binders = binders,
-      )
+      ).await()
     }
+
     insert {
       bindLong(0, 1)
       bindLong(1, null)
@@ -235,13 +258,18 @@ abstract class AndroidxSqliteDriverTest {
       assertNull(cursor.getString(2))
       assertNull(cursor.getBytes(3))
       assertNull(cursor.getDouble(4))
-      QueryResult.Unit
+      QueryResult.AsyncValue {}
     }
-    driver.executeQuery(identifier = 8, sql = "SELECT * FROM nullability_test", mapper = mapper, parameters = 0)
+    driver.executeQuery(
+      identifier = 8,
+      sql = "SELECT * FROM nullability_test",
+      mapper = mapper,
+      parameters = 0,
+    ).await()
   }
 
   @Test
-  fun `cached statement can be reused`() {
+  fun `cached statement can be reused`() = runTest {
     useSingleItemCacheDriver { driver ->
       lateinit var bindable: SqlPreparedStatement
       driver.executeQuery(
@@ -250,7 +278,7 @@ abstract class AndroidxSqliteDriverTest {
         mapper = { QueryResult.Unit },
         parameters = 0,
         binders = { bindable = this },
-      )
+      ).await()
 
       driver.executeQuery(
         identifier = 2,
@@ -260,12 +288,12 @@ abstract class AndroidxSqliteDriverTest {
         binders = {
           assertSame(bindable, this)
         },
-      )
+      ).await()
     }
   }
 
   @Test
-  fun `cached statement is evicted and closed`() {
+  fun `cached statement is evicted and closed`() = runTest {
     useSingleItemCacheDriver { driver ->
       lateinit var bindable: SqlPreparedStatement
       driver.executeQuery(
@@ -274,7 +302,14 @@ abstract class AndroidxSqliteDriverTest {
         mapper = { QueryResult.Unit },
         parameters = 0,
         binders = { bindable = this },
-      )
+      ).await()
+
+      driver.executeQuery(
+        identifier = 3,
+        sql = "SELECT * FROM test",
+        mapper = { QueryResult.Unit },
+        parameters = 0,
+      ).await()
 
       driver.executeQuery(
         identifier = 3,
@@ -291,17 +326,17 @@ abstract class AndroidxSqliteDriverTest {
         binders = {
           assertNotSame(bindable, this)
         },
-      )
+      ).await()
     }
   }
 
   @Test
-  fun `uncached statement is closed`() {
+  fun `uncached statement is closed`() = runTest {
     useSingleItemCacheDriver { driver ->
       lateinit var bindable: AndroidxStatement
       driver.execute(null, "SELECT * FROM test", 0) {
         bindable = this as AndroidxStatement
-      }
+      }.await()
 
       try {
         bindable.execute()
@@ -312,47 +347,47 @@ abstract class AndroidxSqliteDriverTest {
   }
 
   @Test
-  fun `row count is correctly returned after an insert`() {
+  fun `row count is correctly returned after an insert`() = runTest {
     val rowCount = driver.execute(null, "INSERT INTO test VALUES (?, ?)", 2) {
       bindLong(0, 1)
       bindString(1, "42")
-    }.value
+    }.await()
 
     assertEquals(1, rowCount)
   }
 
   @Test
-  fun `row count is correctly returned after an update`() {
+  fun `row count is correctly returned after an update`() = runTest {
     val rowCount = driver.execute(null, "UPDATE test SET value = ?", 1) {
       bindString(0, "42")
-    }.value
+    }.await()
 
     assertEquals(0, rowCount)
 
     driver.execute(null, "INSERT INTO test VALUES (?, ?)", 2) {
       bindLong(0, 1)
       bindString(1, "41")
-    }
+    }.await()
 
     val rowCount2 = driver.execute(null, "UPDATE test SET value = ?", 1) {
       bindString(0, "42")
-    }.value
+    }.await()
 
     assertEquals(1, rowCount2)
   }
 
   @Test
-  fun `row count is correctly returned after a delete`() {
-    val rowCount = driver.execute(null, "DELETE FROM test", 0).value
+  fun `row count is correctly returned after a delete`() = runTest {
+    val rowCount = driver.execute(null, "DELETE FROM test", 0).await()
 
     assertEquals(0, rowCount)
 
     driver.execute(null, "INSERT INTO test VALUES (?, ?)", 2) {
       bindLong(0, 1)
       bindString(1, "41")
-    }
+    }.await()
 
-    val rowCount2 = driver.execute(null, "DELETE FROM test", 0).value
+    val rowCount2 = driver.execute(null, "DELETE FROM test", 0).await()
 
     assertEquals(1, rowCount2)
   }

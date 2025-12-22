@@ -2,7 +2,7 @@ package com.eygraber.sqldelight.androidx.driver.integration
 
 import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import app.cash.sqldelight.Query
-import app.cash.sqldelight.TransactionWithoutReturn
+import app.cash.sqldelight.SuspendingTransactionWithoutReturn
 import app.cash.sqldelight.coroutines.mapToOne
 import app.cash.sqldelight.coroutines.mapToOneNotNull
 import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteConfiguration
@@ -21,27 +21,24 @@ abstract class AndroidxSqliteIntegrationTest {
   abstract var type: AndroidxSqliteDatabaseType
 
   @OptIn(ExperimentalCoroutinesApi::class, DelicateCoroutinesApi::class)
-  private fun readDispatcher(): CoroutineDispatcher? = when {
+  private fun readDispatcher(
+    configuration: AndroidxSqliteConfiguration,
+  ): CoroutineDispatcher? = when {
     configuration.concurrencyModel.readerCount >= 1 -> newFixedThreadPoolContext(
       nThreads = configuration.concurrencyModel.readerCount,
       name = "db-reads",
     )
+
     else -> null
   }
 
-  open var configuration = AndroidxSqliteConfiguration()
-    set(value) {
-      field = value
-      readDispatcher = readDispatcher()
-    }
-
-  private var readDispatcher: CoroutineDispatcher? = readDispatcher()
+  private var readDispatcher: CoroutineDispatcher? = null
 
   @OptIn(ExperimentalCoroutinesApi::class, DelicateCoroutinesApi::class)
   val writeDispatcher: CoroutineDispatcher = newSingleThreadContext("db-writes")
 
   suspend inline fun AndroidXDb.withTransaction(
-    crossinline transactionBlock: TransactionWithoutReturn.() -> Unit,
+    crossinline transactionBlock: suspend SuspendingTransactionWithoutReturn.() -> Unit,
   ) {
     withContext(writeDispatcher) {
       transaction {
@@ -53,13 +50,19 @@ abstract class AndroidxSqliteIntegrationTest {
   fun <T : Any> Flow<Query<T>>.mapToOne(): Flow<T> = mapToOne(readDispatcher ?: writeDispatcher)
   fun <T : Any> Flow<Query<T>>.mapToOneNotNull(): Flow<T> = mapToOneNotNull(readDispatcher ?: writeDispatcher)
 
+  protected open fun createConfiguration() = AndroidxSqliteConfiguration()
+
   val driver by lazy {
+    val configuration = createConfiguration()
+
     AndroidxSqliteDriver(
       driver = BundledSQLiteDriver(),
       databaseType = type,
       schema = AndroidXDb.Schema,
       configuration = configuration,
-    )
+    ).also {
+      readDispatcher = readDispatcher(configuration)
+    }
   }
 
   val database by lazy {

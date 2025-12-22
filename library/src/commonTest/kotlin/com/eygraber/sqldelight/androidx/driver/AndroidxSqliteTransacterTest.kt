@@ -1,11 +1,16 @@
 package com.eygraber.sqldelight.androidx.driver
 
 import androidx.sqlite.SQLiteConnection
-import app.cash.sqldelight.TransacterImpl
+import app.cash.sqldelight.SuspendingTransacterImpl
 import app.cash.sqldelight.db.AfterVersion
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.db.SqlSchema
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.newSingleThreadContext
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -16,12 +21,12 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 abstract class AndroidxSqliteTransacterTest {
-  private lateinit var transacter: TransacterImpl
+  private lateinit var transacter: SuspendingTransacterImpl
   private lateinit var driver: SqlDriver
 
   @Suppress("VisibleForTests")
   private fun setupDatabase(
-    schema: SqlSchema<QueryResult.Value<Unit>>,
+    schema: SqlSchema<QueryResult.AsyncValue<Unit>>,
     connectionPool: ConnectionPool? = null,
   ): SqlDriver = AndroidxSqliteDriver(
     connectionFactory = androidxSqliteTestConnectionFactory(),
@@ -33,18 +38,18 @@ abstract class AndroidxSqliteTransacterTest {
   @BeforeTest
   fun setup() {
     val driver = setupDatabase(
-      object : SqlSchema<QueryResult.Value<Unit>> {
+      object : SqlSchema<QueryResult.AsyncValue<Unit>> {
         override val version = 1L
-        override fun create(driver: SqlDriver): QueryResult.Value<Unit> = QueryResult.Unit
+        override fun create(driver: SqlDriver): QueryResult.AsyncValue<Unit> = QueryResult.AsyncValue {}
         override fun migrate(
           driver: SqlDriver,
           oldVersion: Long,
           newVersion: Long,
           vararg callbacks: AfterVersion,
-        ): QueryResult.Value<Unit> = QueryResult.Unit
+        ): QueryResult.AsyncValue<Unit> = QueryResult.AsyncValue {}
       },
     )
-    transacter = object : TransacterImpl(driver) {}
+    transacter = object : SuspendingTransacterImpl(driver) {}
     this.driver = driver
   }
 
@@ -54,24 +59,24 @@ abstract class AndroidxSqliteTransacterTest {
   }
 
   @Test
-  fun ifBeginningANonEnclosedTransactionFails_furtherTransactionsAreNotBlockedFromBeginning() {
-    this.driver.close()
+  fun ifBeginningANonEnclosedTransactionFails_furtherTransactionsAreNotBlockedFromBeginning() = runTest {
+    this@AndroidxSqliteTransacterTest.driver.close()
 
     val driver = setupDatabase(
-      object : SqlSchema<QueryResult.Value<Unit>> {
+      object : SqlSchema<QueryResult.AsyncValue<Unit>> {
         override val version = 1L
-        override fun create(driver: SqlDriver): QueryResult.Value<Unit> = QueryResult.Unit
+        override fun create(driver: SqlDriver): QueryResult.AsyncValue<Unit> = QueryResult.AsyncValue {}
         override fun migrate(
           driver: SqlDriver,
           oldVersion: Long,
           newVersion: Long,
           vararg callbacks: AfterVersion,
-        ): QueryResult.Value<Unit> = QueryResult.Unit
+        ): QueryResult.AsyncValue<Unit> = QueryResult.AsyncValue {}
       },
       connectionPool = FirstTransactionsFailConnectionPool(),
     )
-    val transacter = object : TransacterImpl(driver) {}
-    this.driver = driver
+    val transacter = object : SuspendingTransacterImpl(driver) {}
+    this@AndroidxSqliteTransacterTest.driver = driver
     assertFails {
       transacter.transaction(noEnclosing = true) {}
     }
@@ -80,7 +85,7 @@ abstract class AndroidxSqliteTransacterTest {
   }
 
   @Test
-  fun afterCommitRunsAfterTransactionCommits() {
+  fun afterCommitRunsAfterTransactionCommits() = runTest {
     var counter = 0
     transacter.transaction {
       afterCommit { counter++ }
@@ -91,7 +96,7 @@ abstract class AndroidxSqliteTransacterTest {
   }
 
   @Test
-  fun afterCommitDoesNotRunAfterTransactionRollbacks() {
+  fun afterCommitDoesNotRunAfterTransactionRollbacks() = runTest {
     var counter = 0
     transacter.transaction {
       afterCommit { counter++ }
@@ -103,13 +108,13 @@ abstract class AndroidxSqliteTransacterTest {
   }
 
   @Test
-  fun afterCommitRunsAfterEnclosingTransactionCommits() {
+  fun afterCommitRunsAfterEnclosingTransactionCommits() = runTest {
     var counter = 0
     transacter.transaction {
       afterCommit { counter++ }
       assertEquals(0, counter)
 
-      transaction {
+      transacter.transaction {
         afterCommit { counter++ }
         assertEquals(0, counter)
       }
@@ -121,13 +126,13 @@ abstract class AndroidxSqliteTransacterTest {
   }
 
   @Test
-  fun afterCommitDoesNotRunInNestedTransactionWhenEnclosingRollsBack() {
+  fun afterCommitDoesNotRunInNestedTransactionWhenEnclosingRollsBack() = runTest {
     var counter = 0
     transacter.transaction {
       afterCommit { counter++ }
       assertEquals(0, counter)
 
-      transaction {
+      transacter.transaction {
         afterCommit { counter++ }
       }
 
@@ -138,13 +143,13 @@ abstract class AndroidxSqliteTransacterTest {
   }
 
   @Test
-  fun afterCommitDoesNotRunInNestedTransactionWhenNestedRollsBack() {
+  fun afterCommitDoesNotRunInNestedTransactionWhenNestedRollsBack() = runTest {
     var counter = 0
     transacter.transaction {
       afterCommit { counter++ }
       assertEquals(0, counter)
 
-      transaction {
+      transacter.transaction {
         afterCommit { counter++ }
         rollback()
       }
@@ -156,7 +161,7 @@ abstract class AndroidxSqliteTransacterTest {
   }
 
   @Test
-  fun afterRollbackNoOpsIfTheTransactionNeverRollsBack() {
+  fun afterRollbackNoOpsIfTheTransactionNeverRollsBack() = runTest {
     var counter = 0
     transacter.transaction {
       afterRollback { counter++ }
@@ -166,7 +171,7 @@ abstract class AndroidxSqliteTransacterTest {
   }
 
   @Test
-  fun afterRollbackRunsAfterARollbackOccurs() {
+  fun afterRollbackRunsAfterARollbackOccurs() = runTest {
     var counter = 0
     transacter.transaction {
       afterRollback { counter++ }
@@ -177,11 +182,11 @@ abstract class AndroidxSqliteTransacterTest {
   }
 
   @Test
-  fun afterRollbackRunsAfterAnInnerTransactionRollsBack() {
+  fun afterRollbackRunsAfterAnInnerTransactionRollsBack() = runTest {
     var counter = 0
     transacter.transaction {
       afterRollback { counter++ }
-      transaction {
+      transacter.transaction {
         rollback()
       }
       throw AssertionError()
@@ -191,10 +196,10 @@ abstract class AndroidxSqliteTransacterTest {
   }
 
   @Test
-  fun afterRollbackRunsInAnInnerTransactionWhenTheOuterTransactionRollsBack() {
+  fun afterRollbackRunsInAnInnerTransactionWhenTheOuterTransactionRollsBack() = runTest {
     var counter = 0
     transacter.transaction {
-      transaction {
+      transacter.transaction {
         afterRollback { counter++ }
       }
       rollback()
@@ -204,7 +209,7 @@ abstract class AndroidxSqliteTransacterTest {
   }
 
   @Test
-  fun transactionsCloseThemselvesOutProperly() {
+  fun transactionsCloseThemselvesOutProperly() = runTest {
     var counter = 0
     transacter.transaction {
       afterCommit { counter++ }
@@ -218,7 +223,7 @@ abstract class AndroidxSqliteTransacterTest {
   }
 
   @Test
-  fun settingNoEnclosingFailsIfThereIsACurrentlyRunningTransaction() {
+  fun settingNoEnclosingFailsIfThereIsACurrentlyRunningTransaction() = runTest {
     transacter.transaction(noEnclosing = true) {
       assertFailsWith<IllegalStateException> {
         transacter.transaction(noEnclosing = true) {
@@ -229,7 +234,7 @@ abstract class AndroidxSqliteTransacterTest {
   }
 
   @Test
-  fun anExceptionThrownInPostRollbackFunctionIsCombinedWithTheExceptionInTheMainBody() {
+  fun anExceptionThrownInPostRollbackFunctionIsCombinedWithTheExceptionInTheMainBody() = runTest {
     class ExceptionA : RuntimeException()
     class ExceptionB : RuntimeException()
 
@@ -246,14 +251,14 @@ abstract class AndroidxSqliteTransacterTest {
   }
 
   @Test
-  fun weCanReturnAValueFromATransaction() {
+  fun weCanReturnAValueFromATransaction() = runTest {
     val result: String = transacter.transactionWithResult { "sup" }
 
     assertEquals(result, "sup")
   }
 
   @Test
-  fun weCanRollbackWithValueFromATransaction() {
+  fun weCanRollbackWithValueFromATransaction() = runTest {
     val result: String = transacter.transactionWithResult {
       rollback("rollback")
 
@@ -265,7 +270,7 @@ abstract class AndroidxSqliteTransacterTest {
   }
 
   @Test
-  fun `detect the afterRollback call has escaped the original transaction thread in transaction`() {
+  fun `detect the afterRollback call has escaped the original transaction thread in transaction`() = runTest {
     assertChecksThreadConfinement(
       transacter = transacter,
       scope = { transaction(false, it) },
@@ -274,7 +279,7 @@ abstract class AndroidxSqliteTransacterTest {
   }
 
   @Test
-  fun `detect the afterCommit call has escaped the original transaction thread in transaction`() {
+  fun `detect the afterCommit call has escaped the original transaction thread in transaction`() = runTest {
     assertChecksThreadConfinement(
       transacter = transacter,
       scope = { transaction(false, it) },
@@ -283,7 +288,7 @@ abstract class AndroidxSqliteTransacterTest {
   }
 
   @Test
-  fun `detect the rollback call has escaped the original transaction thread in transaction`() {
+  fun `detect the rollback call has escaped the original transaction thread in transaction`() = runTest {
     assertChecksThreadConfinement(
       transacter = transacter,
       scope = { transaction(false, it) },
@@ -292,7 +297,7 @@ abstract class AndroidxSqliteTransacterTest {
   }
 
   @Test
-  fun `detect the afterRollback call has escaped the original transaction thread in transactionWithReturn`() {
+  fun `detect the afterRollback call has escaped the original transaction thread in transactionWithReturn`() = runTest {
     assertChecksThreadConfinement(
       transacter = transacter,
       scope = { transactionWithResult(false, it) },
@@ -301,7 +306,7 @@ abstract class AndroidxSqliteTransacterTest {
   }
 
   @Test
-  fun `detect the afterCommit call has escaped the original transaction thread in transactionWithReturn`() {
+  fun `detect the afterCommit call has escaped the original transaction thread in transactionWithReturn`() = runTest {
     assertChecksThreadConfinement(
       transacter = transacter,
       scope = { transactionWithResult(false, it) },
@@ -310,7 +315,7 @@ abstract class AndroidxSqliteTransacterTest {
   }
 
   @Test
-  fun `detect the rollback call has escaped the original transaction thread in transactionWithReturn`() {
+  fun `detect the rollback call has escaped the original transaction thread in transactionWithReturn`() = runTest {
     assertChecksThreadConfinement(
       transacter = transacter,
       scope = { transactionWithResult(false, it) },
@@ -319,6 +324,7 @@ abstract class AndroidxSqliteTransacterTest {
   }
 }
 
+@OptIn(DelicateCoroutinesApi::class, ExperimentalCoroutinesApi::class)
 private class FirstTransactionsFailConnectionPool : ConnectionPool {
   private val firstTransactionFailConnection = object : SQLiteConnection {
     private var isFirstBeginTransaction = true
@@ -333,21 +339,27 @@ private class FirstTransactionsFailConnectionPool : ConnectionPool {
       if(sql == "BEGIN IMMEDIATE" && isFirstBeginTransaction) {
         isFirstBeginTransaction = false
         error("Throwing an error")
-      }
-      else {
+      } else {
         connection.prepare(sql)
       }
   }
 
+  private val dispatcher = newSingleThreadContext("ReadWriteDispatcher")
+
   override fun close() {
     firstTransactionFailConnection.close()
+    dispatcher.close()
   }
 
-  override fun acquireWriterConnection() = firstTransactionFailConnection
-  override fun releaseWriterConnection() {}
-  override fun acquireReaderConnection() = firstTransactionFailConnection
-  override fun releaseReaderConnection(connection: SQLiteConnection) {}
-  override fun <R> setJournalMode(
-    executeStatement: (SQLiteConnection) -> QueryResult.Value<R>,
-  ): QueryResult.Value<R> = error("Don't use")
+  override suspend fun <R> runOnDispatcher(block: suspend () -> R) = withContext(dispatcher) {
+    block()
+  }
+
+  override suspend fun acquireWriterConnection() = firstTransactionFailConnection
+  override suspend fun releaseWriterConnection() {}
+  override suspend fun acquireReaderConnection() = firstTransactionFailConnection
+  override suspend fun releaseReaderConnection(connection: SQLiteConnection) {}
+  override suspend fun <R> setJournalMode(
+    executeStatement: suspend (SQLiteConnection) -> R,
+  ): R = error("Don't use")
 }
