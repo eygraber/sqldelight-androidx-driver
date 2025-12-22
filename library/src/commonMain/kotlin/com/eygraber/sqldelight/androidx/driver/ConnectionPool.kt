@@ -6,13 +6,13 @@ import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteConcurrencyModel.Mu
 import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteConcurrencyModel.MultipleReadersSingleWriter
 import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteConcurrencyModel.SingleReaderWriter
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.concurrent.Volatile
-import kotlin.coroutines.coroutineContext
 
 internal interface ConnectionPool : AutoCloseable {
   suspend fun <R> runOnDispatcher(block: suspend () -> R): R
@@ -78,7 +78,7 @@ internal class AndroidxDriverConnectionPool(
   }
 
   override suspend fun <R> runOnDispatcher(block: suspend () -> R) =
-    when(coroutineContext[TransactionElement]) {
+    when(currentCoroutineContext()[TransactionElement]) {
       null -> withContext(concurrencyModel.dispatcher) {
         block()
       }
@@ -109,13 +109,11 @@ internal class AndroidxDriverConnectionPool(
   override suspend fun acquireReaderConnection() =
     when(concurrencyModel.readerCount) {
       0 -> acquireWriterConnection()
-      else -> {
-        journalModeMutex.withLock {
-          readerChannel.tryReceive().getOrNull()?.connection?.value ?: run {
-            withTimeoutOrNull(50) {
-              acquireWriterConnection()
-            } ?: readerChannel.receive().connection.value
-          }
+      else -> journalModeMutex.withLock {
+        readerChannel.tryReceive().getOrNull()?.connection?.value ?: run {
+          withTimeoutOrNull(50) {
+            acquireWriterConnection()
+          } ?: readerChannel.receive().connection.value
         }
       }
     }

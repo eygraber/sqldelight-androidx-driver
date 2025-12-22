@@ -350,22 +350,20 @@ abstract class AndroidxSqliteCreationTest {
         ).await()
 
         execute(
-          null,
-          """
-        |DELETE FROM user WHERE id = 1;
-          """.trimMargin(),
-          0,
+          identifier = null,
+          sql = "DELETE FROM user WHERE id = 1;",
+          parameters = 0,
         ).await()
       }
       val dbName = Random.nextULong().toHexString()
 
       val messageViolations = List(5) { id ->
         """
-      |ForeignKeyConstraintViolation:
-      |  Constraint index: 0
-      |  Referencing table: post
-      |  Referencing rowId: $id
-      |  Referenced table: user
+        |ForeignKeyConstraintViolation:
+        |  Constraint index: 0
+        |  Referencing table: post
+        |  Referencing rowId: $id
+        |  Referenced table: user
         """.trimMargin()
       }.joinToString(separator = "\n\n")
 
@@ -388,10 +386,10 @@ abstract class AndroidxSqliteCreationTest {
       assertEquals(
         expected = exception.message,
         actual = """
-      |The following foreign key constraints are violated ($expectedNotShown not shown):
-      |
-      |$messageViolations
-      """.trimMargin(),
+        |The following foreign key constraints are violated ($expectedNotShown not shown):
+        |
+        |$messageViolations
+        """.trimMargin(),
       )
 
       assertContentEquals(
@@ -471,11 +469,9 @@ abstract class AndroidxSqliteCreationTest {
     runTest {
       val schema = getSchema {
         execute(
-          null,
-          """
-        |DELETE FROM user WHERE id = 1;
-          """.trimMargin(),
-          0,
+          identifier = null,
+          sql = "DELETE FROM user WHERE id = 1;",
+          parameters = 0,
         ).await()
       }
       val dbName = Random.nextULong().toHexString()
