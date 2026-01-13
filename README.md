@@ -36,7 +36,7 @@ you get started by creating a `AndroidxSqliteDriver`:
 Database(
   AndroidxSqliteDriver(
     driver = BundledSQLiteDriver(),
-    type = AndroidxSqliteDatabaseType.File("<absolute path to db file>"),
+    databaseType = AndroidxSqliteDatabaseType.File("<absolute path to db file>"),
     schema = Database.Schema,
   )
 )
@@ -48,7 +48,7 @@ on Android and JVM you can pass a `File`:
 Database(
   AndroidxSqliteDriver(
     driver = BundledSQLiteDriver(),
-    type = AndroidxSqliteDatabaseType.File(File("my.db")),
+    databaseType = AndroidxSqliteDatabaseType.File(File("my.db")),
     schema = Database.Schema,
   )
 )
@@ -60,7 +60,7 @@ and on Android you can pass a `Context` to create the file in the app's database
 Database(
   AndroidxSqliteDriver(
     driver = BundledSQLiteDriver(),
-    type = AndroidxSqliteDatabaseType.FileProvider(context, "my.db"),
+    databaseType = AndroidxSqliteDatabaseType.FileProvider(context, "my.db"),
     schema = Database.Schema,
   )
 )
@@ -77,7 +77,7 @@ Database(
       override fun createConnection(name: String) =
         driver.open(name, SQLITE_OPEN_READWRITE or SQLITE_OPEN_CREATE)
     },
-    type = AndroidxSqliteDatabaseType.File("<absolute path to db file>"),
+    databaseType = AndroidxSqliteDatabaseType.File("<absolute path to db file>"),
     schema = Database.Schema,
   )
 )
