@@ -8,7 +8,6 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class AndroidxSqliteUtilsTest {
-
   @Test
   fun `findSpecialCase returns null for empty string`() {
     assertNull(AndroidxSqliteUtils.findSpecialCase(""))
