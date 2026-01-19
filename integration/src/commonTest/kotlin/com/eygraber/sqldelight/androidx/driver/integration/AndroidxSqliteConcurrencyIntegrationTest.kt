@@ -19,17 +19,18 @@ class AndroidxSqliteConcurrencyIntegrationTest : AndroidxSqliteIntegrationTest()
   override var type: AndroidxSqliteDatabaseType =
     AndroidxSqliteDatabaseType.File("concurrency_integration-${Random.nextULong()}.db")
 
-  @Test
-  fun concurrentQueriesWithMultipleReadersDoNotShareCachedStatementsAcrossConnections() = runTest {
-    // having 2 readers instead of the default 4 makes it more
-    // likely to have concurrent readers using the same cached statement
-    configuration = AndroidxSqliteConfiguration(
+  // having 2 readers instead of the default 4 makes it more
+  // likely to have concurrent readers using the same cached statement
+  override fun createConfiguration() =
+    AndroidxSqliteConfiguration(
       concurrencyModel = MultipleReadersSingleWriter(
         isWal = true,
         walCount = 2,
       ),
     )
 
+  @Test
+  fun concurrentQueriesWithMultipleReadersDoNotShareCachedStatementsAcrossConnections() = runTest {
     launch {
       val deleteJob = launch {
         database

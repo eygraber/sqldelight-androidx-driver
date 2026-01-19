@@ -45,6 +45,7 @@ buildscript-dokka = { module = "org.jetbrains.dokka:dokka-gradle-plugin", versio
 buildscript-kotlin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
 buildscript-publish = { module = "com.vanniktech:gradle-maven-publish-plugin", version.ref = "publish" }
 
+cashapp-sqldelight-async = { module = "app.cash.sqldelight:async-extensions", version.ref = "cashapp-sqldelight" }
 cashapp-sqldelight-coroutines = { module = "app.cash.sqldelight:coroutines-extensions", version.ref = "cashapp-sqldelight" }
 cashapp-sqldelight-dialect = { module = "app.cash.sqldelight:sqlite-3-38-dialect", version.ref = "cashapp-sqldelight" }
 cashapp-sqldelight-runtime = { module = "app.cash.sqldelight:runtime", version.ref = "cashapp-sqldelight" }

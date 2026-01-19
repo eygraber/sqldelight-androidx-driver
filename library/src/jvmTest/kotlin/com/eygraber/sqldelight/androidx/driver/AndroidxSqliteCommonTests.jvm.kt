@@ -2,7 +2,7 @@ package com.eygraber.sqldelight.androidx.driver
 
 import androidx.sqlite.SQLiteDriver
 import androidx.sqlite.driver.bundled.BundledSQLiteDriver
-import app.cash.sqldelight.Transacter
+import app.cash.sqldelight.SuspendingTransacter
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import org.junit.Assert
@@ -28,9 +28,9 @@ actual fun deleteFile(name: String) {
   File(name).delete()
 }
 
-actual inline fun <T> assertChecksThreadConfinement(
-  transacter: Transacter,
-  crossinline scope: Transacter.(T.() -> Unit) -> Unit,
+actual suspend inline fun <T> assertChecksThreadConfinement(
+  transacter: SuspendingTransacter,
+  crossinline scope: suspend SuspendingTransacter.(T.() -> Unit) -> Unit,
   crossinline block: T.() -> Unit,
 ) {
   lateinit var thread: Thread
