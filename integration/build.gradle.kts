@@ -1,4 +1,3 @@
-import com.android.build.api.dsl.androidLibrary
 import com.android.build.api.variant.HasUnitTest
 import org.jetbrains.kotlin.gradle.dsl.ExplicitApiMode
 

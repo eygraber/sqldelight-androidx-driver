@@ -1,5 +1,3 @@
-import com.android.build.api.dsl.androidLibrary
-
 plugins {
   id("com.android.lint")
   id("com.eygraber.conventions-kotlin-multiplatform")
