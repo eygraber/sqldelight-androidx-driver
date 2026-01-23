@@ -7,7 +7,7 @@ android-sdk-min = "23"
 
 androidxSqlite = "2.6.2"
 
-atomicfu = "0.30.0"
+atomicfu = "0.31.0"
 
 cashapp-sqldelight = "2.2.1"
 
