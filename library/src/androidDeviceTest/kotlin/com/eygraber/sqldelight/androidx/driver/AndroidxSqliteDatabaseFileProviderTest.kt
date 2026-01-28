@@ -20,7 +20,8 @@ class AndroidxSqliteDatabaseFileProviderTest {
         context = ApplicationProvider.getApplicationContext<Application>(),
         name = "test.db",
       )
-    } finally {
+    }
+    finally {
       StrictMode.setThreadPolicy(oldPolicy)
     }
   }

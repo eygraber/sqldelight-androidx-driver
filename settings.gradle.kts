@@ -60,7 +60,7 @@ develocity {
   buildScan {
     termsOfUseUrl = "https://gradle.com/terms-of-service"
     publishing.onlyIf { Env.isCI }
-    if (Env.isCI) {
+    if(Env.isCI) {
       termsOfUseAgree = "yes"
     }
   }

@@ -176,7 +176,8 @@ abstract class AndroidxSqliteCreationTest {
         mapper = { cursor ->
           if(cursor.next().value) {
             QueryResult.Value(cursor.getLong(0))
-          } else {
+          }
+          else {
             QueryResult.Value(null)
           }
         },

@@ -35,7 +35,8 @@ internal class AndroidxPreparedStatement(
   override fun bindBoolean(index: Int, boolean: Boolean?) {
     if(boolean == null) {
       statement.bindNull(index + 1)
-    } else {
+    }
+    else {
       statement.bindLong(index + 1, if(boolean) 1L else 0L)
     }
   }
@@ -90,7 +91,8 @@ internal class AndroidxQuery(
     binds[index] = { statement ->
       if(boolean == null) {
         statement.bindNull(index + 1)
-      } else {
+      }
+      else {
         statement.bindLong(index + 1, if(boolean) 1L else 0L)
       }
     }

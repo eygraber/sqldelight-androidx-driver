@@ -357,7 +357,8 @@ class ConnectionPoolTest {
     // Clean up
     try {
       pool.close()
-    } catch(_: Exception) {
+    }
+    catch(_: Exception) {
     }
   }
 
@@ -396,7 +397,8 @@ class ConnectionPoolTest {
 
       if(result.lowercase() == "wal") {
         assertTrue(updatedModel.isWal, "Should detect WAL mode for result: $result")
-      } else {
+      }
+      else {
         assertFalse(updatedModel.isWal, "Should not detect WAL mode for result: $result")
       }
     }

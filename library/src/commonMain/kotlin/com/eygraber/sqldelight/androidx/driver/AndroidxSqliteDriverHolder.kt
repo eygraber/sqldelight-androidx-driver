@@ -139,7 +139,8 @@ private inline fun ConnectionPool.withForeignKeysDisabled(
         execSQL("PRAGMA foreign_keys = ON;")
       }
     }
-  } catch(e: Throwable) {
+  }
+  catch(e: Throwable) {
     // An exception happened during creation / migration.
     // We will try to re-enable foreign keys, and if that also fails,
     // we will add it as a suppressed exception to the original one.
@@ -149,7 +150,8 @@ private inline fun ConnectionPool.withForeignKeysDisabled(
           execSQL("PRAGMA foreign_keys = ON;")
         }
       }
-    } catch(fkException: Throwable) {
+    }
+    catch(fkException: Throwable) {
       e.addSuppressed(fkException)
     }
     throw e

@@ -174,7 +174,8 @@ abstract class AndroidxSqliteConcurrencyTest {
                 mapper = { cursor ->
                   if(cursor.next().value) {
                     QueryResult.Value(cursor.getLong(0) ?: -1L)
-                  } else {
+                  }
+                  else {
                     QueryResult.Value(-1L)
                   }
                 },
@@ -188,7 +189,8 @@ abstract class AndroidxSqliteConcurrencyTest {
                 binders = null,
               )
             }
-          } else {
+          }
+          else {
             execute(
               identifier = null,
               sql = "UPDATE test SET value = 'test' WHERE id = 0;",
@@ -207,7 +209,8 @@ abstract class AndroidxSqliteConcurrencyTest {
         mapper = { cursor ->
           if(cursor.next().value) {
             QueryResult.Value(cursor.getLong(0) ?: -1L)
-          } else {
+          }
+          else {
             QueryResult.Value(-1L)
           }
         },
@@ -274,7 +277,8 @@ abstract class AndroidxSqliteConcurrencyTest {
             mapper = { cursor ->
               if(cursor.next().value) {
                 QueryResult.Value(cursor.getString(0))
-              } else {
+              }
+              else {
                 QueryResult.Value(null)
               }
             },
@@ -324,7 +328,8 @@ abstract class AndroidxSqliteConcurrencyTest {
             mapper = { cursor ->
               if(cursor.next().value) {
                 QueryResult.Value(cursor.getString(0))
-              } else {
+              }
+              else {
                 QueryResult.Value(null)
               }
             },
