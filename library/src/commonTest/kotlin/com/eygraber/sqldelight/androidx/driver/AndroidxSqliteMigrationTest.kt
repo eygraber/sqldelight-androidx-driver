@@ -180,7 +180,8 @@ abstract class AndroidxSqliteMigrationTest {
         mapper = { cursor ->
           if(cursor.next().value) {
             QueryResult.Value(cursor.getLong(0))
-          } else {
+          }
+          else {
             QueryResult.Value(null)
           }
         },
@@ -206,7 +207,8 @@ abstract class AndroidxSqliteMigrationTest {
         mapper = { cursor ->
           if(cursor.next().value) {
             QueryResult.Value(cursor.getLong(0))
-          } else {
+          }
+          else {
             QueryResult.Value(null)
           }
         },
@@ -255,7 +257,8 @@ abstract class AndroidxSqliteMigrationTest {
         mapper = { cursor ->
           if(cursor.next().value) {
             QueryResult.Value(cursor.getLong(0))
-          } else {
+          }
+          else {
             QueryResult.Value(null)
           }
         },
@@ -300,7 +303,8 @@ abstract class AndroidxSqliteMigrationTest {
         mapper = { cursor ->
           if(cursor.next().value) {
             QueryResult.Value(cursor.getLong(0))
-          } else {
+          }
+          else {
             QueryResult.Value(null)
           }
         },

@@ -45,7 +45,7 @@ internal object AndroidxSqliteUtils {
     index: Int,
     sql: String,
   ): String? {
-    if (index < 0 || index > sql.length) {
+    if(index < 0 || index > sql.length) {
       // Bad comment syntax or incomplete statement
       return null
     }
@@ -60,25 +60,25 @@ internal object AndroidxSqliteUtils {
   @Suppress("ReturnCount")
   fun getStatementPrefixIndex(s: String): Int {
     val limit: Int = s.length - 2
-    if (limit < 0) return -1
+    if(limit < 0) return -1
     var i = 0
-    while (i < limit) {
+    while(i < limit) {
       val c = s[i]
       when {
         c <= ' ' -> i++
         c == '-' -> {
-          if (s[i + 1] != '-') return i
+          if(s[i + 1] != '-') return i
           i = s.indexOf('\n', i + 2)
-          if (i < 0) return -1
+          if(i < 0) return -1
           i++
         }
         c == '/' -> {
-          if (s[i + 1] != '*') return i
+          if(s[i + 1] != '*') return i
           i++
           do {
             i = s.indexOf('*', i + 1)
-            if (i < 0) return -1
-          } while (i + 1 < limit && s[i + 1] != '/')
+            if(i < 0) return -1
+          } while(i + 1 < limit && s[i + 1] != '/')
           i += 2
         }
         else -> return i

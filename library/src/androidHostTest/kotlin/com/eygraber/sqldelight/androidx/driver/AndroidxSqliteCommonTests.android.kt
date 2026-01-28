@@ -12,6 +12,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import java.io.File
 import java.util.concurrent.Semaphore
+import kotlin.concurrent.thread
 
 @RunWith(RobolectricTestRunner::class)
 actual class CommonCallbackTest : AndroidxSqliteCallbackTest()
@@ -69,12 +70,12 @@ actual inline fun <T> assertChecksThreadConfinement(
   crossinline scope: Transacter.(T.() -> Unit) -> Unit,
   crossinline block: T.() -> Unit,
 ) {
-  lateinit var thread: Thread
+  lateinit var workerThread: Thread
   var result: Result<Unit>? = null
   val semaphore = Semaphore(0)
 
   transacter.scope {
-    thread = kotlin.concurrent.thread {
+    workerThread = thread {
       result = runCatching {
         this@scope.block()
       }
@@ -84,7 +85,7 @@ actual inline fun <T> assertChecksThreadConfinement(
   }
 
   semaphore.acquire()
-  thread.interrupt()
+  workerThread.interrupt()
   Assert.assertThrows(IllegalStateException::class.java) {
     result?.getOrThrow()
   }

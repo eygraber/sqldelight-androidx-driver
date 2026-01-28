@@ -13,7 +13,7 @@ cashapp-sqldelight = "2.2.1"
 
 conventions = "0.0.98"
 
-detekt = "2.0.0-alpha.1"
+detekt = "2.0.0-alpha.2"
 
 dokka = "2.1.0"
 
@@ -21,6 +21,7 @@ kotlin = "2.3.0"
 kotlinx-coroutines = "1.10.2"
 
 ktlint = "1.8.0"
+ktlintCustomRules = "0.1.1"
 
 okio = "3.16.4"
 
@@ -51,8 +52,13 @@ cashapp-sqldelight-runtime = { module = "app.cash.sqldelight:runtime", version.r
 
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }
 
-# not actually used; just here so renovate picks it up
+# just here so renovate picks it up
+# noinspection UnusedVersionCatalogEntry
 ktlint = { module = "com.pinterest.ktlint:ktlint-bom", version.ref = "ktlint" }
+
+# just here so renovate picks it up
+# noinspection UnusedVersionCatalogEntry
+ktlintCustomRules = { module = "com.eygraber.ktlint.rules:ktlint-rules", version.ref = "ktlintCustomRules" }
 
 okio = { module = "com.squareup.okio:okio", version.ref = "okio" }
 

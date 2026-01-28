@@ -29,7 +29,8 @@ internal inline fun <R> ConnectionPool.withWriterConnection(
   val connection = acquireWriterConnection()
   try {
     return connection.block()
-  } finally {
+  }
+  finally {
     releaseWriterConnection()
   }
 }
@@ -133,7 +134,8 @@ internal class AndroidxDriverConnectionPool(
       }
 
       return queryResult
-    } finally {
+    }
+    finally {
       populateReaderConnectionChannel()
       releaseWriterConnection()
     }
@@ -167,7 +169,8 @@ internal class AndroidxDriverConnectionPool(
             if(reader.isCreated) {
               reader.connection.value.close()
             }
-          } catch(_: Throwable) {
+          }
+          catch(_: Throwable) {
           }
         }
       }

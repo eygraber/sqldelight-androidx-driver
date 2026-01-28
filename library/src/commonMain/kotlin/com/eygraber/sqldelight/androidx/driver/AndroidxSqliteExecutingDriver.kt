@@ -55,7 +55,8 @@ internal class AndroidxSqliteExecutingDriver(
         parameters = parameters,
         binders = binders,
       )
-    } else {
+    }
+    else {
       withConnection(
         isWrite = specialCase == AndroidxSqliteSpecialCase.ForeignKeys ||
           specialCase == AndroidxSqliteSpecialCase.Synchronous,
@@ -164,7 +165,8 @@ internal class AndroidxSqliteExecutingDriver(
         statement.binders()
       }
       return QueryResult.Value(statement.result())
-    } finally {
+    }
+    finally {
       if(identifier != null && !isStatementCacheSkipped) {
         statement.reset()
 
@@ -172,7 +174,8 @@ internal class AndroidxSqliteExecutingDriver(
         // closing any statement with this identifier
         // that was put into the cache while we used this one
         statementsCache?.put(identifier, statement)?.close()
-      } else {
+      }
+      else {
         statement.close()
       }
     }
@@ -211,7 +214,8 @@ internal class AndroidxSqliteExecutingDriver(
 
       try {
         connection.block()
-      } finally {
+      }
+      finally {
         when {
           isWrite -> connectionPool.releaseWriterConnection()
           else -> connectionPool.releaseReaderConnection(connection)
@@ -242,10 +246,12 @@ internal class AndroidxSqliteExecutingDriver(
         try {
           if(successful) {
             connection.execSQL("COMMIT")
-          } else {
+          }
+          else {
             connection.execSQL("ROLLBACK")
           }
-        } finally {
+        }
+        finally {
           connectionPool.releaseWriterConnection()
         }
       }

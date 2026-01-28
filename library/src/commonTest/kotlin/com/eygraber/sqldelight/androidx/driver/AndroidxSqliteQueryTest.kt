@@ -85,7 +85,8 @@ abstract class AndroidxSqliteQueryTest {
     try {
       testDataQuery().executeAsOne()
       throw AssertionError("Expected an IllegalStateException")
-    } catch(_: NullPointerException) {
+    }
+    catch(_: NullPointerException) {
     }
   }
 
@@ -97,7 +98,8 @@ abstract class AndroidxSqliteQueryTest {
 
       testDataQuery().executeAsOne()
       throw AssertionError("Expected an IllegalStateException")
-    } catch(_: IllegalStateException) {
+    }
+    catch(_: IllegalStateException) {
     }
   }
 
@@ -123,7 +125,8 @@ abstract class AndroidxSqliteQueryTest {
 
       testDataQuery().executeAsOneOrNull()
       throw AssertionError("Expected an IllegalStateException")
-    } catch(_: IllegalStateException) {
+    }
+    catch(_: IllegalStateException) {
     }
   }
 
