@@ -32,7 +32,7 @@ conventions = { id = "com.eygraber.conventions", version.ref = "conventions" }
 sqldelight = { id = "app.cash.sqldelight", version.ref = "cashapp-sqldelight" }
 
 [libraries]
-androidx-collections = "androidx.collection:collection:1.5.0"
+androidx-collections = "androidx.collection:collection:1.6.0"
 androidx-sqlite = { module = "androidx.sqlite:sqlite", version.ref = "androidxSqlite" }
 androidx-sqliteBundled = { module = "androidx.sqlite:sqlite-bundled", version.ref = "androidxSqlite" }
 androidx-sqliteFramework = { module = "androidx.sqlite:sqlite-framework", version.ref = "androidxSqlite" }
