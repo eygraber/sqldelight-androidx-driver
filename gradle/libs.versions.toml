@@ -23,7 +23,7 @@ kotlinx-coroutines = "1.10.2"
 ktlint = "1.8.0"
 ktlintCustomRules = "0.1.1"
 
-okio = "3.16.4"
+okio = "3.17.0"
 
 publish = "0.36.0"
 
