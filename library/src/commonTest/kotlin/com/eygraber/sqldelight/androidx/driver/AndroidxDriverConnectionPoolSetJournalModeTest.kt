@@ -190,35 +190,24 @@ class AndroidxDriverConnectionPoolSetJournalModeTest {
     // Acquire the writer connection since reads will fall back to it
     pool.acquireWriterConnection()
 
-    // First, acquire some reader connections to populate the channel
-    val initialReader1 = pool.acquireReaderConnection()
-    val initialReader2 = pool.acquireReaderConnection()
+    // Materialize reader connections by acquiring and releasing them.
+    val initialReader1 = pool.acquireReaderConnection() as TestConnection
+    val initialReader2 = pool.acquireReaderConnection() as TestConnection
     pool.releaseReaderConnection(initialReader1)
     pool.releaseReaderConnection(initialReader2)
 
-    // Track connections that get closed (start at -1 to account for the writer connection)
-    var connectionsClosed = -1
-    testConnectionFactory.createdConnections.forEach { connection ->
-      connection.executedStatements.clear()
-    }
-    testConnectionFactory.createdConnections.forEach { connection ->
-      connection.executedStatements.add("CLOSE")
-      connectionsClosed++
-    }
+    assertFalse(initialReader1.isClosed, "reader connection should be open before the swap")
+    assertFalse(initialReader2.isClosed, "reader connection should be open before the swap")
 
     // Release the writer connection to allow setJournalMode to acquire it
     pool.releaseWriterConnection()
 
-    // Change journal mode - this should close existing readers and create new ones
     pool.setJournalMode { connection ->
       "delete" // Switch to non-WAL mode
     }
 
-    // Verify that some connections were closed during the journal mode change
-    assertTrue(
-      connectionsClosed == 2,
-      "All reader connections should have been closed during journal mode change",
-    )
+    assertTrue(initialReader1.isClosed, "reader connection should be closed by the swap")
+    assertTrue(initialReader2.isClosed, "reader connection should be closed by the swap")
 
     pool.close()
   }

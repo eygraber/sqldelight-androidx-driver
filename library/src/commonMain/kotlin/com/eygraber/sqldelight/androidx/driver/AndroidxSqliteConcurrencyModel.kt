@@ -3,6 +3,7 @@
 package com.eygraber.sqldelight.androidx.driver
 
 import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteConcurrencyModel.Companion.CpuCacheHitOptimizedProvider
+import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteConcurrencyModel.Companion.memoryOptimizedProvider
 import kotlinx.coroutines.CloseableCoroutineDispatcher
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.DelicateCoroutinesApi
@@ -29,9 +30,11 @@ import kotlinx.coroutines.newFixedThreadPoolContext
  *
  * @property readerCount The number of reader connections to maintain in the pool
  */
-public sealed interface AndroidxSqliteConcurrencyModel : AutoCloseable {
-  public val dispatcher: CoroutineDispatcher
-  public val readerCount: Int
+public sealed class AndroidxSqliteConcurrencyModel {
+  internal abstract val dispatcher: CoroutineDispatcher
+  internal abstract val readerCount: Int
+
+  internal abstract fun close()
 
   public companion object {
     public const val DISPATCHER_NAME: String = "AndroidxSqliteDriver"
@@ -69,16 +72,21 @@ public sealed interface AndroidxSqliteConcurrencyModel : AutoCloseable {
    * - Sequential read/write operations only
    * - Suitable for single-threaded or low-concurrency scenarios
    */
-  public class SingleReaderWriter(
-    dispatcherProvider: (Int, String) -> CoroutineDispatcher = memoryOptimizedProvider(),
-  ) : AndroidxSqliteConcurrencyModel {
+  public data class SingleReaderWriter(
+    internal val dispatcherProvider: (Int, String) -> CoroutineDispatcher = memoryOptimizedProvider(),
+  ) : AndroidxSqliteConcurrencyModel() {
     override val readerCount: Int = 0
-    override val dispatcher: CoroutineDispatcher = dispatcherProvider(1, DISPATCHER_NAME)
+
+    private val lazyDispatcher = lazy {
+      dispatcherProvider(1, DISPATCHER_NAME)
+    }
+
+    override val dispatcher: CoroutineDispatcher get() = lazyDispatcher.value
 
     @OptIn(ExperimentalCoroutinesApi::class)
     override fun close() {
-      if(dispatcher is CloseableCoroutineDispatcher) {
-        dispatcher.close()
+      if(lazyDispatcher.isInitialized()) {
+        (dispatcher as? CloseableCoroutineDispatcher)?.close()
       }
     }
   }
@@ -107,22 +115,26 @@ public sealed interface AndroidxSqliteConcurrencyModel : AutoCloseable {
    *
    * @param readerCount Number of reader connections to maintain (typically 2-8)
    */
-  public class MultipleReaders(
+  public data class MultipleReaders(
     override val readerCount: Int,
-    dispatcherProvider: (Int, String) -> CoroutineDispatcher = memoryOptimizedProvider(),
-  ) : AndroidxSqliteConcurrencyModel {
+    internal val dispatcherProvider: (Int, String) -> CoroutineDispatcher = memoryOptimizedProvider(),
+  ) : AndroidxSqliteConcurrencyModel() {
     init {
       require(readerCount > 0) {
         "readerCount must be greater than 0"
       }
     }
 
-    override val dispatcher: CoroutineDispatcher = dispatcherProvider(readerCount, DISPATCHER_NAME)
+    private val lazyDispatcher = lazy {
+      dispatcherProvider(readerCount, DISPATCHER_NAME)
+    }
+
+    override val dispatcher: CoroutineDispatcher get() = lazyDispatcher.value
 
     @OptIn(ExperimentalCoroutinesApi::class)
     override fun close() {
-      if(dispatcher is CloseableCoroutineDispatcher) {
-        dispatcher.close()
+      if(lazyDispatcher.isInitialized()) {
+        (dispatcher as? CloseableCoroutineDispatcher)?.close()
       }
     }
   }
@@ -167,19 +179,23 @@ public sealed interface AndroidxSqliteConcurrencyModel : AutoCloseable {
     public val isWal: Boolean,
     public val nonWalCount: Int = 0,
     public val walCount: Int = 3,
-    public val dispatcherProvider: (Int, String) -> CoroutineDispatcher = memoryOptimizedProvider(),
-  ) : AndroidxSqliteConcurrencyModel {
+    internal val dispatcherProvider: (Int, String) -> CoroutineDispatcher = memoryOptimizedProvider(),
+  ) : AndroidxSqliteConcurrencyModel() {
     override val readerCount: Int = when {
       isWal -> walCount
       else -> nonWalCount
     }
 
-    override val dispatcher: CoroutineDispatcher = dispatcherProvider(readerCount + 1, DISPATCHER_NAME)
+    private val lazyDispatcher = lazy {
+      dispatcherProvider(readerCount + 1, DISPATCHER_NAME)
+    }
+
+    override val dispatcher: CoroutineDispatcher get() = lazyDispatcher.value
 
     @OptIn(ExperimentalCoroutinesApi::class)
     override fun close() {
-      if(dispatcher is CloseableCoroutineDispatcher) {
-        dispatcher.close()
+      if(lazyDispatcher.isInitialized()) {
+        (dispatcher as? CloseableCoroutineDispatcher)?.close()
       }
     }
   }

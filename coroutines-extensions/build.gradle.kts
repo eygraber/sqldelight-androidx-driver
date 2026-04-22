@@ -19,9 +19,9 @@ kotlin {
   sourceSets {
     commonMain.dependencies {
       api(libs.cashapp.sqldelight.runtime)
+      api(libs.kotlinx.coroutines.core)
 
       implementation(libs.cashapp.sqldelight.async)
-      implementation(libs.kotlinx.coroutines.core)
     }
 
     commonTest.dependencies {

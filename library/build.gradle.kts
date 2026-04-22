@@ -56,9 +56,9 @@ kotlin {
 
       api(libs.androidx.sqlite)
       api(libs.cashapp.sqldelight.runtime)
+      api(libs.kotlinx.coroutines.core)
 
       implementation(libs.atomicfu)
-      implementation(libs.kotlinx.coroutines.core)
     }
 
     commonTest.dependencies {

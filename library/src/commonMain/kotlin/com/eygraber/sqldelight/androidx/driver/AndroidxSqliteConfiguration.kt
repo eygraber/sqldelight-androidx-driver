@@ -73,6 +73,14 @@ public class AndroidxSqliteConfiguration(
     isWal = journalMode == SqliteJournalMode.WAL,
   ),
 ) {
+  /**
+   * [concurrencyModel] is intentionally carried over from this instance rather than recomputed
+   * from [journalMode]. The model (reader/writer layout, dispatcher) is not meant to change
+   * after the driver is constructed; the one exception is `isWal`, which the driver flips
+   * automatically when `PRAGMA journal_mode` is executed at runtime. If you need a different
+   * concurrency layout, construct a new [AndroidxSqliteConfiguration] via the primary
+   * constructor.
+   */
   public fun copy(
     isForeignKeyConstraintsEnabled: Boolean = this.isForeignKeyConstraintsEnabled,
     journalMode: SqliteJournalMode = this.journalMode,
