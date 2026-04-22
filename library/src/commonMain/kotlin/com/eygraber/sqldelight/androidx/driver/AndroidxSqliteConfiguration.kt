@@ -47,9 +47,11 @@ public enum class SqliteSync(internal val value: String) {
  * @param journalMode The journal mode to use. Defaults to [SqliteJournalMode.WAL].
  * @param sync The synchronous mode to use. Defaults to [SqliteSync.Full] unless [journalMode]
  * is set to [SqliteJournalMode.WAL] in which case it is [SqliteSync.Normal].
- * @param concurrencyModel The max amount of read connections that will be kept in the [ConnectionPool].
- * Defaults to 4 when [journalMode] is [SqliteJournalMode.WAL], otherwise 0 (since reads are blocked by writes).
- * The default for [SqliteJournalMode.WAL] may be changed in the future to be based on how many CPUs are available.
+ * @param concurrencyModel Describes how read and write connections are pooled and which
+ * [kotlinx.coroutines.CoroutineDispatcher] the driver uses for database work.
+ * Defaults to [MultipleReadersSingleWriter] with `isWal = (journalMode == SqliteJournalMode.WAL)`
+ * — giving 3 reader connections plus the 1 writer in WAL mode, and 0 readers otherwise (since reads are blocked by
+ * writes).
  * This value is ignored for [androidx.sqlite.SQLiteDriver] implementations that provide their own connection pool.
  */
 public class AndroidxSqliteConfiguration(

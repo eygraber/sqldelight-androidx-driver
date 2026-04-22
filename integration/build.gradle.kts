@@ -27,10 +27,10 @@ kotlin {
     }
 
     commonTest.dependencies {
+      implementation(projects.coroutinesExtensions)
       implementation(projects.library)
 
       implementation(libs.androidx.sqliteBundled)
-      implementation(libs.cashapp.sqldelight.coroutines)
       implementation(libs.cashapp.sqldelight.runtime)
 
       implementation(libs.kotlinx.coroutines.core)
@@ -62,6 +62,7 @@ sqldelight {
 
       deriveSchemaFromMigrations = false
       treatNullAsUnknownForEquality = true
+      generateAsync = true
     }
   }
 }
