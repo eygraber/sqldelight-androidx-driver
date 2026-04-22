@@ -1,9 +1,11 @@
 package com.eygraber.sqldelight.androidx.driver.integration
 
-import app.cash.sqldelight.coroutines.asFlow
 import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteConcurrencyModel.MultipleReadersSingleWriter
 import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteConfiguration
 import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteDatabaseType
+import com.eygraber.sqldelight.androidx.driver.coroutines.asFlow
+import com.eygraber.sqldelight.androidx.driver.coroutines.mapToOne
+import com.eygraber.sqldelight.androidx.driver.coroutines.mapToOneNotNull
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
@@ -19,17 +21,18 @@ class AndroidxSqliteConcurrencyIntegrationTest : AndroidxSqliteIntegrationTest()
   override var type: AndroidxSqliteDatabaseType =
     AndroidxSqliteDatabaseType.File("concurrency_integration-${Random.nextULong()}.db")
 
-  @Test
-  fun concurrentQueriesWithMultipleReadersDoNotShareCachedStatementsAcrossConnections() = runTest {
-    // having 2 readers instead of the default 4 makes it more
-    // likely to have concurrent readers using the same cached statement
-    configuration = AndroidxSqliteConfiguration(
+  // having 2 readers instead of the default 4 makes it more
+  // likely to have concurrent readers using the same cached statement
+  override fun createConfiguration() =
+    AndroidxSqliteConfiguration(
       concurrencyModel = MultipleReadersSingleWriter(
         isWal = true,
         walCount = 2,
       ),
     )
 
+  @Test
+  fun concurrentQueriesWithMultipleReadersDoNotShareCachedStatementsAcrossConnections() = runTest {
     launch {
       val deleteJob = launch {
         database

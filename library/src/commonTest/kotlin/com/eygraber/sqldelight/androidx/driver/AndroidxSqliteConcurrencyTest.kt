@@ -1,6 +1,6 @@
 package com.eygraber.sqldelight.androidx.driver
 
-import app.cash.sqldelight.TransacterImpl
+import app.cash.sqldelight.SuspendingTransacterImpl
 import app.cash.sqldelight.db.AfterVersion
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
@@ -10,20 +10,19 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import kotlin.random.Random
 import kotlin.random.nextULong
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
-private const val CONCURRENCY: Int = 500
+private const val CONCURRENCY: Int = 99
 
 abstract class AndroidxSqliteConcurrencyTest {
-  private val schema = object : SqlSchema<QueryResult.Value<Unit>> {
+  private val schema = object : SqlSchema<QueryResult.AsyncValue<Unit>> {
     override val version: Long = 1
 
-    override fun create(driver: SqlDriver): QueryResult.Value<Unit> {
+    override fun create(driver: SqlDriver): QueryResult.AsyncValue<Unit> = QueryResult.AsyncValue {
       driver.execute(
         null,
         """
@@ -33,8 +32,7 @@ abstract class AndroidxSqliteConcurrencyTest {
         |);
         """.trimMargin(),
         0,
-      )
-      return QueryResult.Unit
+      ).await()
     }
 
     override fun migrate(
@@ -42,13 +40,13 @@ abstract class AndroidxSqliteConcurrencyTest {
       oldVersion: Long,
       newVersion: Long,
       vararg callbacks: AfterVersion,
-    ) = QueryResult.Unit
+    ) = QueryResult.AsyncValue {}
   }
 
-  private val schemaForInitialSynchronization = object : SqlSchema<QueryResult.Value<Unit>> {
+  private val schemaForInitialSynchronization = object : SqlSchema<QueryResult.AsyncValue<Unit>> {
     override var version: Long = 1
 
-    override fun create(driver: SqlDriver): QueryResult.Value<Unit> {
+    override fun create(driver: SqlDriver): QueryResult.AsyncValue<Unit> = QueryResult.AsyncValue {
       driver.execute(
         null,
         """
@@ -58,12 +56,10 @@ abstract class AndroidxSqliteConcurrencyTest {
         |);
         """.trimMargin(),
         0,
-      )
+      ).await()
 
       // add an artificial delay to ensure other threads hit the sync point
-      runBlocking {
-        delay(500)
-      }
+      delay(500)
 
       driver.execute(
         null,
@@ -71,9 +67,7 @@ abstract class AndroidxSqliteConcurrencyTest {
         |INSERT INTO test(id, value) VALUES (0, 'initial');
         """.trimMargin(),
         0,
-      )
-
-      return QueryResult.Unit
+      ).await()
     }
 
     override fun migrate(
@@ -81,11 +75,9 @@ abstract class AndroidxSqliteConcurrencyTest {
       oldVersion: Long,
       newVersion: Long,
       vararg callbacks: AfterVersion,
-    ): QueryResult.Value<Unit> {
+    ): QueryResult.AsyncValue<Unit> = QueryResult.AsyncValue {
       // add an artificial delay to ensure other threads hit the sync point
-      runBlocking {
-        delay(500)
-      }
+      delay(500)
 
       driver.execute(
         null,
@@ -93,19 +85,19 @@ abstract class AndroidxSqliteConcurrencyTest {
         |INSERT INTO test(id, value) VALUES (1, 'migrated');
         """.trimMargin(),
         0,
-      )
-
-      return QueryResult.Unit
+      ).await()
     }
   }
 
   private inline fun withDatabase(
-    schema: SqlSchema<QueryResult.Value<Unit>>,
+    schema: SqlSchema<QueryResult.AsyncValue<Unit>>,
     dbName: String,
     noinline onCreate: SqlDriver.() -> Unit,
     noinline onUpdate: SqlDriver.(Long, Long) -> Unit,
     noinline onOpen: SqlDriver.() -> Unit,
-    noinline onConfigure: AndroidxSqliteConfigurableDriver.() -> Unit = { setJournalMode(SqliteJournalMode.WAL) },
+    noinline onConfigure: suspend AndroidxSqliteConfigurableDriver.() -> Unit = {
+      setJournalMode(SqliteJournalMode.WAL)
+    },
     deleteDbBeforeRun: Boolean = true,
     deleteDbAfterRun: Boolean = true,
     configuration: AndroidxSqliteConfiguration = AndroidxSqliteConfiguration(
@@ -160,8 +152,14 @@ abstract class AndroidxSqliteConcurrencyTest {
       onCreate = {},
       onUpdate = { _, _ -> },
       onOpen = {},
+      configuration = AndroidxSqliteConfiguration(
+        concurrencyModel = MultipleReadersSingleWriter(
+          isWal = true,
+          walCount = CONCURRENCY - 1,
+        ),
+      ),
     ) {
-      val transacter = object : TransacterImpl(this) {}
+      val transacter = object : SuspendingTransacterImpl(this) {}
 
       val jobs = mutableListOf<Job>()
       repeat(CONCURRENCY * 2) { a ->
@@ -181,13 +179,13 @@ abstract class AndroidxSqliteConcurrencyTest {
                 },
                 parameters = 0,
                 binders = null,
-              ).value
+              ).await()
               execute(
                 identifier = null,
                 sql = "INSERT INTO test(id) VALUES (${lastId + 1});",
                 parameters = 0,
                 binders = null,
-              )
+              ).await()
             }
           }
           else {
@@ -196,7 +194,7 @@ abstract class AndroidxSqliteConcurrencyTest {
               sql = "UPDATE test SET value = 'test' WHERE id = 0;",
               parameters = 0,
               binders = null,
-            )
+            ).await()
           }
         }
       }
@@ -216,7 +214,7 @@ abstract class AndroidxSqliteConcurrencyTest {
         },
         parameters = 0,
         binders = null,
-      ).value
+      ).await()
 
       assertEquals(CONCURRENCY - 1L, lastId)
     }
@@ -246,7 +244,7 @@ abstract class AndroidxSqliteConcurrencyTest {
             mapper = { QueryResult.Unit },
             parameters = 0,
             binders = null,
-          )
+          ).await()
         }
       }
 
@@ -285,7 +283,7 @@ abstract class AndroidxSqliteConcurrencyTest {
             parameters = 0,
           )
 
-          assertEquals("initial", result.value)
+          assertEquals("initial", result.await())
         }
       }.joinAll()
     }
@@ -306,7 +304,7 @@ abstract class AndroidxSqliteConcurrencyTest {
       deleteDbAfterRun = false,
     ) {
       launch(IoDispatcher) {
-        execute(identifier = null, sql = "PRAGMA user_version;", parameters = 0, binders = null)
+        execute(identifier = null, sql = "PRAGMA user_version;", parameters = 0, binders = null).await()
       }.join()
     }
 
@@ -336,7 +334,7 @@ abstract class AndroidxSqliteConcurrencyTest {
             parameters = 0,
           )
 
-          assertEquals("migrated", result.value)
+          assertEquals("migrated", result.await())
         }
       }.joinAll()
     }

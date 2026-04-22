@@ -51,6 +51,7 @@ plugins {
 
 rootProject.name = "sqldelight-androidx-driver"
 
+include(":coroutines-extensions")
 include(":integration")
 include(":library")
 

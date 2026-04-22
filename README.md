@@ -13,7 +13,7 @@ repositories {
 }
 
 dependencies {
-  implementation("com.eygraber:sqldelight-androidx-driver:0.0.17")
+  implementation("com.eygraber:sqldelight-androidx-driver:0.1.0")
 }
 ```
 
@@ -25,10 +25,15 @@ Assuming the following configuration:
 ```kotlin
 sqldelight {
   databases {
-    create("Database")
+    create("Database") {
+      generateAsync = true
+    }
   }
 }
 ```
+
+`generateAsync = true` is required — `AndroidxSqliteDriver` is a suspending driver
+(see [Suspending Driver](#suspending-driver) below).
 
 you get started by creating a `AndroidxSqliteDriver`:
 
@@ -71,7 +76,7 @@ If you want to provide `OpenFlags` to the bundled or native driver, you can use:
 ```kotlin
 Database(
   AndroidxSqliteDriver(
-    connectionFactory = object : AndroidxConnectionFactory {
+    connectionFactory = object : AndroidxSqliteConnectionFactory {
       override val driver = BundledSQLiteDriver()
       
       override fun createConnection(name: String) =
@@ -84,6 +89,101 @@ Database(
 ```
 
 It will handle calling the `create` and `migrate` functions on your schema for you, and keep track of the database's version.
+
+## Suspending Driver
+
+`AndroidxSqliteDriver` is a suspending driver, so SQLDelight must be configured with
+`generateAsync = true`:
+
+```kotlin
+sqldelight {
+  databases {
+    create("Database") {
+      generateAsync = true
+    }
+  }
+}
+```
+
+With `generateAsync = true`, generated queries return `QueryResult.AsyncValue` rather than
+materialized values — you must call `.await()` (or the `awaitAsOne`/`awaitAsList`/etc. helpers
+from `app.cash.sqldelight:async-extensions`) to get the result:
+
+```kotlin
+val user: User = database.userQueries.selectById(id).awaitAsOne()
+val users: List<User> = database.userQueries.selectAll().awaitAsList()
+```
+
+All database calls are suspending, and the driver runs them on its own coroutine dispatchers —
+you don't need to wrap calls in `withContext(Dispatchers.IO)`. Learn more [below](#dispatchers).
+
+### Lifecycle Callbacks
+
+`AndroidxSqliteDriver` accepts four optional callbacks, all invoked at most once on the first
+interaction with the database:
+
+```kotlin
+AndroidxSqliteDriver(
+  driver = BundledSQLiteDriver(),
+  databaseType = AndroidxSqliteDatabaseType.File("my.db"),
+  schema = Database.Schema,
+  onConfigure = {
+    // Suspending. Runs before create/migrate. Use it to override pragmas that aren't
+    // covered by AndroidxSqliteConfiguration.
+    setForeignKeyConstraintsEnabled(true)
+  },
+  onCreate = { /* side effects after first create */ },
+  onUpdate = { old, new -> /* side effects after migration */ },
+  onOpen = { /* side effects after create or migrate */ },
+)
+```
+
+All four callbacks run at most once per driver instance, on the first database interaction,
+guarded by an internal mutex — concurrent first-time callers all wait for them to complete before
+any queries execute. If you close the driver and construct a new one against the same database,
+`onConfigure` and `onOpen` run again for the new instance; `onCreate` and `onUpdate` only run if
+the schema actually needs to be created or migrated.
+
+- `onConfigure` runs first, before any schema work. It's the only suspending callback and is the
+  right place to override pragmas that aren't covered by `AndroidxSqliteConfiguration`.
+- `onCreate` runs only when the database is created for the first time, after `SqlSchema.create`
+  has committed.
+- `onUpdate` runs only when the schema version has increased, after `SqlSchema.migrate` has
+  committed.
+- `onOpen` runs on every first interaction, after any create/migrate work.
+
+To seed data or run additional SQL during create or migrate, put it in your
+`SqlSchema.create` / `SqlSchema.migrate` — those run inside a driver-managed transaction.
+`onCreate`, `onUpdate`, and `onOpen` are non-suspending and meant for things like logging or
+updating in-memory state.
+
+### Flow Extensions
+
+A companion artifact provides `Flow` extensions that mirror
+[`app.cash.sqldelight:coroutines-extensions`](https://github.com/sqldelight/sqldelight/blob/master/extensions/coroutines-extensions/src/commonMain/kotlin/app/cash/sqldelight/coroutines/FlowExtensions.kt),
+but default the `CoroutineContext` parameter to `EmptyCoroutineContext` — the driver already
+dispatches each query onto its own connection pool, so wrapping every mapper in a second
+`withContext(Dispatchers.IO)` is redundant.
+
+```kotlin
+dependencies {
+  implementation("com.eygraber:sqldelight-coroutines-extensions:0.1.0")
+}
+```
+
+```kotlin
+import com.eygraber.sqldelight.androidx.driver.coroutines.asFlow
+import com.eygraber.sqldelight.androidx.driver.coroutines.mapToList
+import com.eygraber.sqldelight.androidx.driver.coroutines.mapToOne
+import com.eygraber.sqldelight.androidx.driver.coroutines.mapToOneOrNull
+
+val usersFlow: Flow<List<User>> = database.userQueries.selectAll().asFlow().mapToList()
+val userFlow: Flow<User?> = database.userQueries.selectById(id).asFlow().mapToOneOrNull()
+```
+
+You can still pass an explicit `CoroutineContext` if you want the mapper to run somewhere
+specific (e.g. `Dispatchers.Main` for UI state). If you prefer the sqldelight extensions,
+they still work — just import from `app.cash.sqldelight.coroutines` instead.
 
 ## Foreign Key Constraints
 
@@ -123,7 +223,7 @@ The simplest model with one connection handling all operations:
 
 ```kotlin
 AndroidxSqliteConfiguration(
-  concurrencyModel = AndroidxSqliteConcurrencyModel.SingleReaderWriter
+  concurrencyModel = AndroidxSqliteConcurrencyModel.SingleReaderWriter()
 )
 ```
 
@@ -164,8 +264,8 @@ The most flexible model that adapts based on journal mode:
 AndroidxSqliteConfiguration(
   concurrencyModel = AndroidxSqliteConcurrencyModel.MultipleReadersSingleWriter(
     isWal = true,        // Enable WAL mode for true concurrency
-    walCount = 4,        // Reader connections when WAL is enabled
-    nonWalCount = 0      // Reader connections when WAL is disabled
+    walCount = 3,        // Reader connections when WAL is enabled (default: 3)
+    nonWalCount = 0,     // Reader connections when WAL is disabled (default: 0)
   )
 )
 ```
@@ -192,7 +292,7 @@ The optimal number of reader connections depends on your use case:
 // Conservative (default)
 AndroidxSqliteConcurrencyModel.MultipleReadersSingleWriter(
   isWal = true,
-  walCount = 4,
+  walCount = 3,
   nonWalCount = 0,
 )
 
@@ -249,15 +349,74 @@ AndroidxSqliteConfiguration(
 > In-Memory and temporary databases automatically use `SingleReaderWriter` model regardless of configuration, as
 > connection pooling provides no benefit for these database types.
 
+## Dispatchers
+
+The driver runs SQLite work on its own `CoroutineDispatcher`, sized to match the concurrency model
+so a writer and each reader get their own slot. You don't need to use `withContext(Dispatchers.IO)`
+when calling the driver — queries and transactions will suspend onto the driver's dispatcher
+automatically, and switch back to your calling context when they return. Inside a transaction,
+every operation stays on the same slot for the lifetime of the transaction, so you don't have to
+worry about switching connections mid-transaction.
+
+You pick how those threads are sourced by passing a `dispatcherProvider` when constructing the
+concurrency model. Two are bundled:
+
+```kotlin
+// Default. Shares threads with Dispatchers.IO via limitedParallelism.
+// Lower memory — no dedicated threads are created for the driver.
+AndroidxSqliteConcurrencyModel.memoryOptimizedProvider()
+
+// Allocates a dedicated thread pool (via newFixedThreadPoolContext).
+// Each connection tends to stay on the same thread, which helps CPU cache locality
+// at the cost of extra OS threads.
+AndroidxSqliteConcurrencyModel.CpuCacheHitOptimizedProvider
+```
+
+`memoryOptimizedProvider()` also accepts a base dispatcher if you'd rather derive parallelism from
+somewhere other than `Dispatchers.IO`:
+
+```kotlin
+AndroidxSqliteConcurrencyModel.memoryOptimizedProvider(
+  dispatcher = myBackgroundDispatcher,
+)
+```
+
+The provider plugs into any concurrency model:
+
+```kotlin
+// Single connection, single dispatcher slot
+AndroidxSqliteConcurrencyModel.SingleReaderWriter(
+  dispatcherProvider = AndroidxSqliteConcurrencyModel.CpuCacheHitOptimizedProvider,
+)
+
+// Multiple readers (read-only), one slot per reader
+AndroidxSqliteConcurrencyModel.MultipleReaders(
+  readerCount = 3,
+  dispatcherProvider = AndroidxSqliteConcurrencyModel.CpuCacheHitOptimizedProvider,
+)
+
+// Multiple readers + single writer
+AndroidxSqliteConcurrencyModel.MultipleReadersSingleWriter(
+  isWal = true,
+  walCount = 3,
+  dispatcherProvider = AndroidxSqliteConcurrencyModel.CpuCacheHitOptimizedProvider,
+)
+```
+
+`driver.close()` disposes the dispatcher, so you generally don't need to manage its lifetime.
+
 ### Journal Mode
 
-If `PRAGMA journal_mode = ...` is used, the connection pool will:
+If `PRAGMA journal_mode = ...` is executed through the driver, the connection pool will:
 
-1. Acquire the writer connection
-2. Acquire all reader connections
-3. Close all reader connections
+1. Block new reader acquisitions and wait for in-flight readers to be returned
+2. Close the returned reader connections
+3. Acquire the writer connection
 4. Run the `PRAGMA` statement
-5. Recreate the reader connections
+5. If the `MultipleReadersSingleWriter` model is in use, flip its `isWal` flag based on the
+   journal mode the statement returned
+6. Recreate the reader connections (sized from the updated concurrency model)
+7. Release the writer and wake any parked reader acquisitions
 
 This ensures all connections use the same journal mode and prevents inconsistencies.
 
@@ -269,7 +428,7 @@ This ensures all connections use the same journal mode and prevents inconsistenc
 4. **Test thoroughly**: Verify your concurrency model works under expected load
 5. **Platform differences**: Android may have different optimal settings than JVM/Native
 
-See [WAL & Dispatchers] for more information about how to configure dispatchers to use for reads and writes.
+For additional background on WAL mode and dispatcher tuning, see [WAL & Dispatchers].
 
 [AndroidX Kotlin Multiplatform SQLite]: https://developer.android.com/kotlin/multiplatform/sqlite
 [SQLDelight]: https://github.com/sqldelight/sqldelight
