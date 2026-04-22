@@ -92,6 +92,41 @@ abstract class AndroidxSqliteTransacterTest {
   }
 
   @Test
+  fun `setting journal_mode inside a transaction throws`() = runTest {
+    val exception = assertFailsWith<IllegalStateException> {
+      transacter.transaction {
+        driver.execute(
+          identifier = null,
+          sql = "PRAGMA journal_mode = WAL",
+          parameters = 0,
+        ).await()
+      }
+    }
+    assertTrue(
+      actual = exception.message.orEmpty().contains("journal_mode"),
+      message = "Expected the exception to mention journal_mode, got: ${exception.message ?: "null"}",
+    )
+  }
+
+  @Test
+  fun `querying journal_mode inside a transaction throws`() = runTest {
+    val exception = assertFailsWith<IllegalStateException> {
+      transacter.transaction {
+        driver.executeQuery(
+          identifier = null,
+          sql = "PRAGMA journal_mode = DELETE",
+          mapper = { QueryResult.Unit },
+          parameters = 0,
+        ).await()
+      }
+    }
+    assertTrue(
+      actual = exception.message.orEmpty().contains("journal_mode"),
+      message = "Expected the exception to mention journal_mode, got: ${exception.message ?: "null"}",
+    )
+  }
+
+  @Test
   fun afterCommitRunsAfterTransactionCommits() = runTest {
     var counter = 0
     transacter.transaction {

@@ -1,12 +1,13 @@
 package com.eygraber.sqldelight.androidx.driver.integration
 
+import app.cash.sqldelight.async.coroutines.awaitAsOne
 import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteConcurrencyModel.MultipleReadersSingleWriter
 import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteConfiguration
 import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteDatabaseType
 import com.eygraber.sqldelight.androidx.driver.coroutines.asFlow
 import com.eygraber.sqldelight.androidx.driver.coroutines.mapToOne
 import com.eygraber.sqldelight.androidx.driver.coroutines.mapToOneNotNull
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChangedBy
@@ -16,6 +17,7 @@ import kotlinx.coroutines.test.runTest
 import kotlin.random.Random
 import kotlin.random.nextULong
 import kotlin.test.Test
+import kotlin.test.assertEquals
 
 class AndroidxSqliteConcurrencyIntegrationTest : AndroidxSqliteIntegrationTest() {
   override var type: AndroidxSqliteDatabaseType =
@@ -33,7 +35,8 @@ class AndroidxSqliteConcurrencyIntegrationTest : AndroidxSqliteIntegrationTest()
 
   @Test
   fun concurrentQueriesWithMultipleReadersDoNotShareCachedStatementsAcrossConnections() = runTest {
-    launch {
+    val insertCount = 50
+    coroutineScope {
       val deleteJob = launch {
         database
           .recordQueries
@@ -60,25 +63,8 @@ class AndroidxSqliteConcurrencyIntegrationTest : AndroidxSqliteIntegrationTest()
           .collect()
       }
 
-      launch {
-        delay(1000)
-        database
-          .recordQueries
-          .countForUser(
-            whereUserId = "1",
-          )
-          .asFlow()
-          .mapToOne()
-          .firstOrNull {
-            it == 0L
-          }
-
-        deleteJob.cancel()
-        concurrentTopObserverJob.cancel()
-      }
-
-      launch {
-        repeat(50) {
+      val insertJob = launch {
+        repeat(insertCount) {
           database.withTransaction {
             database
               .recordQueries
@@ -89,6 +75,29 @@ class AndroidxSqliteConcurrencyIntegrationTest : AndroidxSqliteIntegrationTest()
           }
         }
       }
+
+      insertJob.join()
+
+      // Wait for the deleter to drain everything the inserter put in.
+      database
+        .recordQueries
+        .countForUser(whereUserId = "1")
+        .asFlow()
+        .mapToOne()
+        .firstOrNull { it == 0L }
+
+      deleteJob.cancel()
+      concurrentTopObserverJob.cancel()
     }
+
+    // Once all inserts are done and the drain observer sees 0, the deleter must have removed
+    // every inserted row without crashing on a shared/stale cached statement across reader
+    // connections.
+    val remaining = database.recordQueries.countForUser(whereUserId = "1").awaitAsOne()
+    assertEquals(
+      0L,
+      remaining,
+      "concurrent reader connections must not share cached statements — every inserted row should have been deleted",
+    )
   }
 }

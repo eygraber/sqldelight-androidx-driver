@@ -1,5 +1,3 @@
-@file:Suppress("ClassOrdering")
-
 package com.eygraber.sqldelight.androidx.driver
 
 import androidx.annotation.VisibleForTesting
@@ -73,6 +71,75 @@ public class AndroidxSqliteDriver @VisibleForTesting(otherwise = PRIVATE) intern
   overridingConnectionPool: ConnectionPool? = null,
   vararg migrationCallbacks: AfterVersion,
 ) : SqlDriver, SuspendingTransacter.TransactionDispatcher {
+  private val statementsCache = HashMap<SQLiteConnection, LruCache<Int, AndroidxStatement>>()
+  private val statementsCacheLock = ReentrantLock()
+
+  private val connectionPool by lazy {
+    val nameProvider = when(databaseType) {
+      is AndroidxSqliteDatabaseType.File -> databaseType::databaseFilePath
+
+      is AndroidxSqliteDatabaseType.FileProvider -> databaseType.databaseFilePathProvider
+
+      AndroidxSqliteDatabaseType.Memory -> {
+        { ":memory:" }
+      }
+
+      AndroidxSqliteDatabaseType.Temporary -> {
+        { "" }
+      }
+    }
+
+    overridingConnectionPool ?: when {
+      connectionFactory.driver.hasConnectionPool ->
+        PassthroughConnectionPool(
+          connectionFactory = connectionFactory,
+          nameProvider = nameProvider,
+          configuration = configuration,
+        )
+
+      else ->
+        AndroidxDriverConnectionPool(
+          connectionFactory = connectionFactory,
+          nameProvider = nameProvider,
+          isFileBased = when(databaseType) {
+            is AndroidxSqliteDatabaseType.File -> true
+            is AndroidxSqliteDatabaseType.FileProvider -> true
+            AndroidxSqliteDatabaseType.Memory -> false
+            AndroidxSqliteDatabaseType.Temporary -> false
+          },
+          configuration = configuration,
+          onConnectionClosed = { connection ->
+            statementsCacheLock.withLock {
+              statementsCache.remove(connection)
+            }?.evictAll()
+          },
+        )
+    }
+  }
+
+  private val listenersLock = SynchronizedObject()
+  private val listeners = linkedMapOf<String, MutableSet<Query.Listener>>()
+
+  private val executingDriverHolder by lazy {
+    @Suppress("ktlint:standard:max-line-length")
+    AndroidxSqliteDriverHolder(
+      connectionPool = this.connectionPool,
+      statementCache = statementsCache,
+      statementCacheLock = statementsCacheLock,
+      statementCacheSize = configuration.cacheSize,
+      schema = schema,
+      isForeignKeyConstraintsEnabled = configuration.isForeignKeyConstraintsEnabled,
+      isForeignKeyConstraintsCheckedAfterCreateOrUpdate = configuration.isForeignKeyConstraintsCheckedAfterCreateOrUpdate,
+      maxMigrationForeignKeyConstraintViolationsToReport = configuration.maxMigrationForeignKeyConstraintViolationsToReport,
+      migrateEmptySchema = migrateEmptySchema,
+      onConfigure = onConfigure,
+      onCreate = onCreate,
+      onUpdate = onUpdate,
+      onOpen = onOpen,
+      migrationCallbacks = migrationCallbacks,
+    )
+  }
+
   public constructor(
     connectionFactory: AndroidxSqliteConnectionFactory,
     databaseType: AndroidxSqliteDatabaseType,
@@ -185,96 +252,6 @@ public class AndroidxSqliteDriver @VisibleForTesting(otherwise = PRIVATE) intern
     migrationCallbacks = migrationCallbacks,
   )
 
-  public data class ForeignKeyConstraintViolation(
-    val referencingTable: String,
-    val referencingRowId: Int,
-    val referencedTable: String,
-    val referencingConstraintIndex: Int,
-  ) {
-    override fun toString(): String =
-      """
-      |ForeignKeyConstraintViolation:
-      |  Constraint index: $referencingConstraintIndex
-      |  Referencing table: $referencingTable
-      |  Referencing rowId: $referencingRowId
-      |  Referenced table: $referencedTable
-      """.trimMargin()
-  }
-
-  public class ForeignKeyConstraintCheckException(
-    public val violations: List<ForeignKeyConstraintViolation>,
-    message: String,
-  ) : Exception(message)
-
-  private val statementsCache = HashMap<SQLiteConnection, LruCache<Int, AndroidxStatement>>()
-  private val statementsCacheLock = ReentrantLock()
-
-  private val connectionPool by lazy {
-    val nameProvider = when(databaseType) {
-      is AndroidxSqliteDatabaseType.File -> databaseType::databaseFilePath
-
-      is AndroidxSqliteDatabaseType.FileProvider -> databaseType.databaseFilePathProvider
-
-      AndroidxSqliteDatabaseType.Memory -> {
-        { ":memory:" }
-      }
-
-      AndroidxSqliteDatabaseType.Temporary -> {
-        { "" }
-      }
-    }
-
-    overridingConnectionPool ?: when {
-      connectionFactory.driver.hasConnectionPool ->
-        PassthroughConnectionPool(
-          connectionFactory = connectionFactory,
-          nameProvider = nameProvider,
-          configuration = configuration,
-        )
-
-      else ->
-        AndroidxDriverConnectionPool(
-          connectionFactory = connectionFactory,
-          nameProvider = nameProvider,
-          isFileBased = when(databaseType) {
-            is AndroidxSqliteDatabaseType.File -> true
-            is AndroidxSqliteDatabaseType.FileProvider -> true
-            AndroidxSqliteDatabaseType.Memory -> false
-            AndroidxSqliteDatabaseType.Temporary -> false
-          },
-          configuration = configuration,
-          onConnectionClosed = { connection ->
-            statementsCacheLock.withLock {
-              statementsCache.remove(connection)
-            }?.evictAll()
-          },
-        )
-    }
-  }
-
-  private val listenersLock = SynchronizedObject()
-  private val listeners = linkedMapOf<String, MutableSet<Query.Listener>>()
-
-  private val executingDriverHolder by lazy {
-    @Suppress("ktlint:standard:max-line-length")
-    AndroidxSqliteDriverHolder(
-      connectionPool = this.connectionPool,
-      statementCache = statementsCache,
-      statementCacheLock = statementsCacheLock,
-      statementCacheSize = configuration.cacheSize,
-      schema = schema,
-      isForeignKeyConstraintsEnabled = configuration.isForeignKeyConstraintsEnabled,
-      isForeignKeyConstraintsCheckedAfterCreateOrUpdate = configuration.isForeignKeyConstraintsCheckedAfterCreateOrUpdate,
-      maxMigrationForeignKeyConstraintViolationsToReport = configuration.maxMigrationForeignKeyConstraintViolationsToReport,
-      migrateEmptySchema = migrateEmptySchema,
-      onConfigure = onConfigure,
-      onCreate = onCreate,
-      onUpdate = onUpdate,
-      onOpen = onOpen,
-      migrationCallbacks = migrationCallbacks,
-    )
-  }
-
   override suspend fun <R> dispatch(transaction: suspend () -> R): R =
     executingDriverHolder.ensureSchemaIsReady {
       dispatch(transaction)
@@ -344,8 +321,31 @@ public class AndroidxSqliteDriver @VisibleForTesting(otherwise = PRIVATE) intern
    * An [IllegalStateException] may be thrown if there are threads using any of the connections.
    */
   override fun close() {
-    statementsCache.values.forEach { it.evictAll() }
-    statementsCache.clear()
+    statementsCacheLock.withLock {
+      statementsCache.values.forEach { it.evictAll() }
+      statementsCache.clear()
+    }
     connectionPool.close()
   }
+
+  public data class ForeignKeyConstraintViolation(
+    val referencingTable: String,
+    val referencingRowId: Int,
+    val referencedTable: String,
+    val referencingConstraintIndex: Int,
+  ) {
+    override fun toString(): String =
+      """
+      |ForeignKeyConstraintViolation:
+      |  Constraint index: $referencingConstraintIndex
+      |  Referencing table: $referencingTable
+      |  Referencing rowId: $referencingRowId
+      |  Referenced table: $referencedTable
+      """.trimMargin()
+  }
+
+  public class ForeignKeyConstraintCheckException(
+    public val violations: List<ForeignKeyConstraintViolation>,
+    message: String,
+  ) : Exception(message)
 }

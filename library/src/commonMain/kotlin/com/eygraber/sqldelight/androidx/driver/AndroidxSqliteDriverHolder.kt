@@ -157,13 +157,19 @@ private suspend inline fun ConnectionPool.withForeignKeysDisabled(
   }
 }
 
+private const val FOREIGN_KEY_VIOLATIONS_PREVIEW = 5
+
 private fun SQLiteConnection.reportForeignKeyViolations(
   maxMigrationForeignKeyConstraintViolationsToReport: Int,
 ) {
   prepare("PRAGMA foreign_key_check;").use { check ->
     val violations = mutableListOf<AndroidxSqliteDriver.ForeignKeyConstraintViolation>()
-    var count = 0
-    while(check.step() && count++ < maxMigrationForeignKeyConstraintViolationsToReport) {
+    var moreExist = false
+    while(check.step()) {
+      if(violations.size >= maxMigrationForeignKeyConstraintViolationsToReport) {
+        moreExist = true
+        break
+      }
       violations.add(
         AndroidxSqliteDriver.ForeignKeyConstraintViolation(
           referencingTable = check.getText(0),
@@ -175,15 +181,24 @@ private fun SQLiteConnection.reportForeignKeyViolations(
     }
 
     if(violations.isNotEmpty()) {
-      val unprintedViolationsCount = violations.size - 5
-      val unprintedDisclaimer = if(unprintedViolationsCount > 0) " ($unprintedViolationsCount not shown)" else ""
+      val previewCount = minOf(FOREIGN_KEY_VIOLATIONS_PREVIEW, violations.size)
+      val capturedNotShown = violations.size - previewCount
+      val disclaimer = when {
+        capturedNotShown > 0 && moreExist ->
+          " ($capturedNotShown captured but not shown; more may exist)"
+        capturedNotShown > 0 ->
+          " ($capturedNotShown not shown)"
+        moreExist ->
+          " (report cap of $maxMigrationForeignKeyConstraintViolationsToReport reached; more may exist)"
+        else -> ""
+      }
 
       throw AndroidxSqliteDriver.ForeignKeyConstraintCheckException(
         violations = violations,
         message = """
-        |The following foreign key constraints are violated$unprintedDisclaimer:
+        |The following foreign key constraints are violated$disclaimer:
         |
-        |${violations.take(5).joinToString(separator = "\n\n")}
+        |${violations.take(previewCount).joinToString(separator = "\n\n")}
         """.trimMargin(),
       )
     }

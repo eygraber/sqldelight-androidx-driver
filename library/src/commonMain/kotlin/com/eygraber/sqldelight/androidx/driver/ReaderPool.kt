@@ -4,6 +4,7 @@ import androidx.sqlite.SQLiteConnection
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -36,6 +37,12 @@ internal class ReaderPool(
   @Volatile
   private var swapFence: CompletableDeferred<Unit>? = null
 
+  // Wakes acquires that are parked on channel.receive() when a swap completes. Needed for the
+  // case where capacity drops to 0 (e.g. WAL → non-WAL with nonWalCount = 0): no future sends
+  // will ever arrive, so without this signal the parked receive would hang forever.
+  @Volatile
+  private var postSwapWakeup: CompletableDeferred<Unit> = CompletableDeferred()
+
   val currentCapacity: Int get() = capacity
 
   /**
@@ -60,17 +67,22 @@ internal class ReaderPool(
    * released or an in-progress swap completes.
    *
    * While a swap is running, acquires park on the swap fence and retry once it clears.
+   *
+   * Returns null if the pool's capacity became 0 while this acquire was running, so the caller
+   * should re-check [AndroidxSqliteConcurrencyModel.readerCount] and route to the writer.
    */
   @Suppress("ReturnCount")
-  suspend fun acquire(onEmpty: suspend () -> SQLiteConnection?): SQLiteConnection {
+  suspend fun acquire(onEmpty: suspend () -> SQLiteConnection?): SQLiteConnection? {
     while(true) {
       swapFence?.await()
+
+      if(capacity == 0) return null
 
       val tryReceived = channel.tryReceive().getOrNull()
       if(tryReceived != null) {
         // A swap could have started between our fence check and tryReceive — if so, this entry
         // belongs to the drain. Hand it back and park on the fence.
-        val fence = swapFence ?: return tryReceived.connection.value
+        val fence = swapFence ?: return materializeOrReturn(tryReceived)
         channel.send(tryReceived)
         fence.await()
         continue
@@ -85,14 +97,43 @@ internal class ReaderPool(
         continue
       }
 
-      val received = channel.receive()
+      // Race channel.receive() against the post-swap wakeup so a swap that drops capacity to 0
+      // mid-wait doesn't leave us parked forever. Capture the wakeup before selecting — if a
+      // swap starts and completes after this line, it'll fire the captured one.
+      val wakeup = postSwapWakeup
+      val received = select {
+        channel.onReceive { it }
+        wakeup.onAwait { null }
+      }
+      if(received == null) continue
+
       // Same race as the tryReceive path above: a swap may have set the fence while we were
       // parked on receive(), and the sender was a release feeding the drain.
-      val fenceAfterReceive = swapFence ?: return received.connection.value
+      val fenceAfterReceive = swapFence ?: return materializeOrReturn(received)
       channel.send(received)
       fenceAfterReceive.await()
     }
   }
+
+  /**
+   * Materializes a received entry's lazy connection. If creation fails, a fresh unopened lazy
+   * entry is put back into the channel so a future acquire can retry — without this, a transient
+   * open failure would permanently shrink capacity and a later swap's drain would block waiting
+   * for a slot that never comes back.
+   */
+  private suspend fun materializeOrReturn(entry: ReaderEntry): SQLiteConnection =
+    try {
+      entry.connection.value
+    }
+    catch(t: Throwable) {
+      channel.send(
+        ReaderEntry(
+          isCreated = false,
+          connection = lazy { connectionFactory.createConnection(name()) },
+        ),
+      )
+      throw t
+    }
 
   suspend fun release(connection: SQLiteConnection) {
     channel.send(
@@ -151,6 +192,11 @@ internal class ReaderPool(
         val nextCapacity = runCatching { newCapacityAfter() }.getOrDefault(priorCapacity)
         populate(nextCapacity)
         swapFence = null
+        // Roll the wakeup so acquires parked on channel.receive() can re-check capacity and
+        // bail out if it dropped to 0.
+        val wakeup = postSwapWakeup
+        postSwapWakeup = CompletableDeferred()
+        wakeup.complete(Unit)
         fence.complete(Unit)
       }
     }

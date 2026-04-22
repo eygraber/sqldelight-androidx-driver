@@ -389,7 +389,7 @@ abstract class AndroidxSqliteCreationTest {
       assertEquals(
         expected = exception.message,
         actual = """
-        |The following foreign key constraints are violated ($expectedNotShown not shown):
+        |The following foreign key constraints are violated ($expectedNotShown captured but not shown; more may exist):
         |
         |$messageViolations
         """.trimMargin(),
@@ -444,7 +444,7 @@ abstract class AndroidxSqliteCreationTest {
     assertEquals(
       expected = exception.message,
       actual = """
-      |The following foreign key constraints are violated:
+      |The following foreign key constraints are violated (report cap of 1 reached; more may exist):
       |
       |ForeignKeyConstraintViolation:
       |  Constraint index: 0

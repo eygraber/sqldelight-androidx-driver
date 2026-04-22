@@ -4,6 +4,7 @@ import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.SQLiteDriver
 import androidx.sqlite.SQLiteStatement
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -12,6 +13,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotSame
 import kotlin.test.assertNull
@@ -28,11 +30,11 @@ class ReaderPoolTest {
 
     assertEquals(0, factory.createdConnections.size, "populate must not eagerly create connections")
 
-    pool.acquire(onEmpty = { null })
+    pool.acquireNonNull()
     assertEquals(1, factory.createdConnections.size)
 
-    pool.acquire(onEmpty = { null })
-    pool.acquire(onEmpty = { null })
+    pool.acquireNonNull()
+    pool.acquireNonNull()
     assertEquals(3, factory.createdConnections.size)
   }
 
@@ -42,9 +44,9 @@ class ReaderPoolTest {
     val pool = ReaderPool(factory, name = { "test.db" })
     pool.populate(3)
 
-    val c1 = pool.acquire(onEmpty = { null })
-    val c2 = pool.acquire(onEmpty = { null })
-    val c3 = pool.acquire(onEmpty = { null })
+    val c1 = pool.acquireNonNull()
+    val c2 = pool.acquireNonNull()
+    val c3 = pool.acquireNonNull()
 
     assertEquals(3, setOf(c1, c2, c3).size, "each acquire should return a distinct connection")
   }
@@ -55,7 +57,7 @@ class ReaderPoolTest {
     val pool = ReaderPool(factory, name = { "test.db" })
     pool.populate(1)
 
-    pool.acquire(onEmpty = { null })
+    pool.acquireNonNull()
 
     var onEmptyInvocations = 0
     val fallback = ReaderPoolTestConnection()
@@ -76,10 +78,10 @@ class ReaderPoolTest {
     val pool = ReaderPool(factory, name = { "test.db" })
     pool.populate(1)
 
-    val c1 = pool.acquire(onEmpty = { null })
+    val c1 = pool.acquireNonNull()
 
     val pending = async {
-      pool.acquire(onEmpty = { null })
+      pool.acquireNonNull()
     }
 
     delay(100)
@@ -97,10 +99,10 @@ class ReaderPoolTest {
     val pool = ReaderPool(factory, name = { "test.db" })
     pool.populate(1)
 
-    val first = pool.acquire(onEmpty = { null })
+    val first = pool.acquireNonNull()
     pool.release(first)
 
-    val second = pool.acquire(onEmpty = { null })
+    val second = pool.acquireNonNull()
 
     assertSame(first, second)
   }
@@ -122,8 +124,8 @@ class ReaderPoolTest {
     val pool = ReaderPool(factory, name = { "test.db" })
     pool.populate(2)
 
-    val c1 = pool.acquire(onEmpty = { null }) as ReaderPoolTestConnection
-    val c2 = pool.acquire(onEmpty = { null }) as ReaderPoolTestConnection
+    val c1 = pool.acquireNonNull() as ReaderPoolTestConnection
+    val c2 = pool.acquireNonNull() as ReaderPoolTestConnection
     pool.release(c1)
     pool.release(c2)
 
@@ -158,7 +160,7 @@ class ReaderPoolTest {
 
     assertEquals(4, pool.currentCapacity)
 
-    val acquired = List(4) { pool.acquire(onEmpty = { null }) }
+    val acquired = List(4) { pool.acquireNonNull() }
     assertEquals(4, acquired.toSet().size, "repopulated channel should yield 4 distinct connections")
   }
 
@@ -187,7 +189,7 @@ class ReaderPoolTest {
     val pool = ReaderPool(factory, name = { "test.db" })
     pool.populate(2)
 
-    val c1 = pool.acquire(onEmpty = { null })
+    val c1 = pool.acquireNonNull()
 
     var blockRan = false
     val swapJob = async {
@@ -225,7 +227,7 @@ class ReaderPoolTest {
 
     var acquired: SQLiteConnection? = null
     val acquireJob = async {
-      acquired = pool.acquire(onEmpty = { null })
+      acquired = pool.acquireNonNull()
     }
 
     delay(100)
@@ -319,8 +321,8 @@ class ReaderPoolTest {
     val pool = ReaderPool(factory, name = { "test.db" })
     pool.populate(3)
 
-    val c1 = pool.acquire(onEmpty = { null }) as ReaderPoolTestConnection
-    val c2 = pool.acquire(onEmpty = { null }) as ReaderPoolTestConnection
+    val c1 = pool.acquireNonNull() as ReaderPoolTestConnection
+    val c2 = pool.acquireNonNull() as ReaderPoolTestConnection
     pool.release(c1)
     pool.release(c2)
 
@@ -363,7 +365,7 @@ class ReaderPoolTest {
     val acquired = mutableListOf<SQLiteConnection>()
     coroutineScope {
       val jobs = List(5) {
-        async { pool.acquire(onEmpty = { null }) }
+        async { pool.acquireNonNull() }
       }
       acquired.addAll(jobs.map { it.await() })
     }
@@ -377,12 +379,12 @@ class ReaderPoolTest {
     val pool = ReaderPool(factory, name = { "test.db" })
     pool.populate(1)
 
-    val before = pool.acquire(onEmpty = { null })
+    val before = pool.acquireNonNull()
     pool.release(before)
 
     pool.withSwap(newCapacityAfter = { 1 }) { }
 
-    val after = pool.acquire(onEmpty = { null })
+    val after = pool.acquireNonNull()
     assertNotSame(before, after, "post-swap acquire should return a freshly-created reader, not the pre-swap one")
   }
 
@@ -392,9 +394,9 @@ class ReaderPoolTest {
     val pool = ReaderPool(factory, name = { "test.db" })
     pool.populate(3)
 
-    val c1 = pool.acquire(onEmpty = { null })
-    val c2 = pool.acquire(onEmpty = { null })
-    val c3 = pool.acquire(onEmpty = { null })
+    val c1 = pool.acquireNonNull()
+    val c2 = pool.acquireNonNull()
+    val c3 = pool.acquireNonNull()
 
     val swapJob = launch {
       pool.withSwap(newCapacityAfter = { 3 }) { }
@@ -436,7 +438,7 @@ class ReaderPoolTest {
     val acquired = mutableListOf<SQLiteConnection>()
     val jobs = List(2) {
       launch {
-        acquired.add(pool.acquire(onEmpty = { null }))
+        acquired.add(pool.acquireNonNull())
       }
     }
 
@@ -452,17 +454,71 @@ class ReaderPoolTest {
   }
 
   @Test
+  fun `acquire parked on receive returns null when swap drops capacity to zero`() = runTest {
+    val factory = ReaderPoolReaderPoolTestConnectionFactory()
+    val pool = ReaderPool(factory, name = { "test.db" })
+    pool.populate(1)
+
+    // Check out the only reader so the next acquire parks on channel.receive().
+    val reader = pool.acquireNonNull() as ReaderPoolTestConnection
+
+    val parkedAcquire = async {
+      pool.acquire(onEmpty = { null })
+    }
+
+    delay(50)
+    assertFalse(parkedAcquire.isCompleted, "acquire should be parked while the only reader is checked out")
+
+    // UNDISPATCHED so withSwap runs synchronously up to its first suspension — by the time
+    // this line returns the fence is set and the drain is blocked on channel.receive().
+    val swapJob = async(start = CoroutineStart.UNDISPATCHED) {
+      pool.withSwap(newCapacityAfter = { 0 }) { }
+    }
+
+    // Release so the drain gets the reader. The parked acquire must still resume with null
+    // because capacity is 0 after the swap, even though the channel briefly had an item.
+    pool.release(reader)
+    swapJob.await()
+
+    val result = parkedAcquire.await()
+    assertNull(
+      result,
+      "acquire must return null so the caller can re-route to the writer after capacity dropped to 0",
+    )
+    assertEquals(0, pool.currentCapacity)
+    assertTrue(reader.isClosed, "drained reader must be closed")
+  }
+
+  @Test
+  fun `acquire parked on receive returns null when fresh swap drops capacity to zero`() = runTest {
+    // Variant of the above: prior capacity is already 0 before the swap (so the drain trivially
+    // completes), new capacity is 0, and the acquire gets woken purely by the post-swap wakeup
+    // signal since no channel send ever happens.
+    val factory = ReaderPoolReaderPoolTestConnectionFactory()
+    val pool = ReaderPool(factory, name = { "test.db" })
+    // Capacity stays at 0.
+
+    val parkedAcquire = async {
+      pool.acquire(onEmpty = { null })
+    }
+
+    delay(50)
+    // With capacity 0 at entry, the top-of-loop check returns null immediately.
+    assertNull(parkedAcquire.await())
+  }
+
+  @Test
   fun `acquire suspended on receive before swap starts yields to the drain`() = runTest {
     val factory = ReaderPoolReaderPoolTestConnectionFactory()
     val pool = ReaderPool(factory, name = { "test.db" })
     pool.populate(1)
 
     // Check out the only reader, forcing the next acquire to suspend on channel.receive().
-    val reader = pool.acquire(onEmpty = { null }) as ReaderPoolTestConnection
+    val reader = pool.acquireNonNull() as ReaderPoolTestConnection
 
     val parkedAcquireFinished = CompletableDeferred<SQLiteConnection>()
     val parkedAcquireJob = async {
-      val result = pool.acquire(onEmpty = { null })
+      val result = pool.acquireNonNull()
       parkedAcquireFinished.complete(result)
       result
     }
@@ -498,7 +554,31 @@ class ReaderPoolTest {
       "parked acquire should receive a freshly-created reader after the swap repopulates",
     )
   }
+
+  @Test
+  fun `acquire failing to open a reader does not permanently shrink capacity`() = runTest {
+    val factory = FailingReaderPoolConnectionFactory(failuresBeforeSuccess = 1)
+    val pool = ReaderPool(factory, name = { "test.db" })
+    pool.populate(1)
+
+    assertFailsWith<IllegalStateException> {
+      pool.acquire(onEmpty = { null })
+    }
+
+    // The failed entry must have been replaced in the channel, so the pool is still acquirable.
+    val acquired = pool.acquireNonNull()
+    assertTrue(acquired is ReaderPoolTestConnection)
+
+    // A subsequent swap must not block — drain needs to find the replacement entry.
+    pool.release(acquired)
+    pool.withSwap(newCapacityAfter = { 1 }) { }
+  }
 }
+
+private suspend fun ReaderPool.acquireNonNull(): SQLiteConnection =
+  requireNotNull(acquire(onEmpty = { null })) {
+    "acquire returned null — pool capacity dropped to 0 during the test"
+  }
 
 private class ReaderPoolTestStatement : SQLiteStatement {
   override fun step(): Boolean = true
@@ -543,5 +623,21 @@ private class ReaderPoolReaderPoolTestConnectionFactory : AndroidxSqliteConnecti
     val connection = ReaderPoolTestConnection()
     createdConnections.add(connection)
     return connection
+  }
+}
+
+private class FailingReaderPoolConnectionFactory(
+  private var failuresBeforeSuccess: Int,
+) : AndroidxSqliteConnectionFactory {
+  override val driver: SQLiteDriver = object : SQLiteDriver {
+    override fun open(fileName: String): SQLiteConnection = ReaderPoolTestConnection()
+  }
+
+  override fun createConnection(name: String): SQLiteConnection {
+    if(failuresBeforeSuccess > 0) {
+      failuresBeforeSuccess--
+      error("open failed")
+    }
+    return ReaderPoolTestConnection()
   }
 }

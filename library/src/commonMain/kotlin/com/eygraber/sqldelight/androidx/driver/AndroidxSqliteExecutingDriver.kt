@@ -225,22 +225,28 @@ internal class AndroidxSqliteExecutingDriver(
     mapper: (SqlCursor) -> QueryResult<R>,
     parameters: Int,
     binders: (SqlPreparedStatement.() -> Unit)?,
-  ) = connectionPool.runOnDispatcher {
-    connectionPool.setJournalMode { connection ->
-      executeStatement(
-        identifier = null,
-        isStatementCacheSkipped = true,
-        connection = connection,
-        createStatement = { c ->
-          AndroidxQuery(
-            sql = sql,
-            statement = c.prepare(sql),
-            argCount = parameters,
-          )
-        },
-        binders = binders,
-        result = { executeQuery(mapper) },
-      )
+  ): R {
+    check(currentCoroutineContext()[TransactionElement] == null) {
+      "PRAGMA journal_mode cannot be set inside a transaction — the driver needs to drain and " +
+        "recreate its reader connections, which requires no writer or readers to be checked out."
+    }
+    return connectionPool.runOnDispatcher {
+      connectionPool.setJournalMode { connection ->
+        executeStatement(
+          identifier = null,
+          isStatementCacheSkipped = true,
+          connection = connection,
+          createStatement = { c ->
+            AndroidxQuery(
+              sql = sql,
+              statement = c.prepare(sql),
+              argCount = parameters,
+            )
+          },
+          binders = binders,
+          result = { executeQuery(mapper) },
+        )
+      }
     }
   }
 

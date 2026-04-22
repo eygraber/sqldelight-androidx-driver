@@ -58,12 +58,6 @@ internal class AndroidxDriverConnectionPool(
 
   private val writerMutex = Mutex()
 
-  // For ephemeral databases, MultipleReadersSingleWriter is replaced with a SingleReaderWriter
-  // because each connection to an in-memory or temporary database sees its own private database.
-  // The replaced model's dispatcher must still be closed when the pool closes, otherwise a
-  // CpuCacheHitOptimizedProvider-backed thread pool would leak.
-  private val orphanedConcurrencyModel: AndroidxSqliteConcurrencyModel?
-
   @Volatile
   private var concurrencyModel: AndroidxSqliteConcurrencyModel
 
@@ -72,16 +66,28 @@ internal class AndroidxDriverConnectionPool(
       isFileBased -> configuration.concurrencyModel to null
       else -> when(val model = configuration.concurrencyModel) {
         is SingleReaderWriter -> model to null
-        is MultipleReaders -> model to null
+        is MultipleReaders -> SingleReaderWriter(
+          dispatcherProvider = model.dispatcherProvider,
+        ) to model
         is MultipleReadersSingleWriter -> SingleReaderWriter(
           dispatcherProvider = model.dispatcherProvider,
         ) to model
       }
     }
     concurrencyModel = resolved
-    orphanedConcurrencyModel = orphan
+
+    // the dispatcher is lazily created,
+    // so this will likely be a no-op in most cases
+    orphan?.close()
   }
 
+  // Readers intentionally skip withWriterConfiguration:
+  //   - journal_mode = WAL is persisted in the db file header, so readers opened after the
+  //     writer switches the db to WAL inherit it automatically
+  //   - synchronous and foreign_keys only affect write paths, and all writes route through the
+  //     writer connection
+  // If a future PRAGMA is added that matters for reads (cache_size, temp_store, etc.), it
+  // needs to be applied here too.
   private val readerPool = ReaderPool(
     connectionFactory = connectionFactory,
     name = { name },
@@ -129,15 +135,19 @@ internal class AndroidxDriverConnectionPool(
    * Acquires a reader connection, suspending if none are available.
    * @return A reader SQLiteConnection
    */
-  override suspend fun acquireReaderConnection(): SQLiteConnection =
-    when(concurrencyModel.readerCount) {
-      0 -> acquireWriterConnection()
-      else -> readerPool.acquire(
+  override suspend fun acquireReaderConnection(): SQLiteConnection {
+    while(true) {
+      if(concurrencyModel.readerCount == 0) return acquireWriterConnection()
+      // acquire() returns null when capacity dropped to 0 mid-wait (e.g. WAL → non-WAL swap).
+      // Loop so we re-check concurrencyModel and route to the writer.
+      val reader = readerPool.acquire(
         onEmpty = {
           withTimeoutOrNull(50) { acquireWriterConnection() }
         },
       )
+      if(reader != null) return reader
     }
+  }
 
   /**
    * Releases a reader connection back to the pool.
@@ -237,7 +247,6 @@ internal class AndroidxDriverConnectionPool(
     }
     finally {
       concurrencyModel.close()
-      orphanedConcurrencyModel?.close()
     }
   }
 }
@@ -291,14 +300,25 @@ internal class PassthroughConnectionPool(
 
 private fun SQLiteConnection.withWriterConfiguration(
   configuration: AndroidxSqliteConfiguration,
-): SQLiteConnection = this.apply {
-  // copy the configuration for thread safety
-  configuration.copy().apply {
-    execSQL("PRAGMA journal_mode = ${journalMode.value};")
-    execSQL("PRAGMA synchronous = ${sync.value};")
+): SQLiteConnection {
+  try {
+    configuration.apply {
+      execSQL("PRAGMA journal_mode = ${journalMode.value};")
+      execSQL("PRAGMA synchronous = ${sync.value};")
 
-    // this must come after PRAGMA journal_mode while https://issuetracker.google.com/issues/447613208 is broken
-    val foreignKeys = if(isForeignKeyConstraintsEnabled) "ON" else "OFF"
-    execSQL("PRAGMA foreign_keys = $foreignKeys;")
+      // this must come after PRAGMA journal_mode while https://issuetracker.google.com/issues/447613208 is broken
+      val foreignKeys = if(isForeignKeyConstraintsEnabled) "ON" else "OFF"
+      execSQL("PRAGMA foreign_keys = $foreignKeys;")
+    }
   }
+  catch(t: Throwable) {
+    try {
+      close()
+    }
+    catch(closeFailure: Throwable) {
+      t.addSuppressed(closeFailure)
+    }
+    throw t
+  }
+  return this
 }
