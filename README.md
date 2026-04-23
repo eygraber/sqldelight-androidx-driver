@@ -1,26 +1,44 @@
-# SqlDelight AndroidX Driver
+# SQLDelight AndroidX Driver
 
-`sqldelight-androidx-driver` provides a [SQLDelight] `SqlDriver` that wraps the [AndroidX Kotlin Multiplatform SQLite]
-libraries.
+[![Maven Central Version](https://img.shields.io/maven-central/v/com.eygraber/sqldelight-androidx-driver)](releases)]
 
-It works with any of the available implementations of AndroidX SQLite; see their documentation for more information.
+The SQLDelight AndroidX Driver provides a [SQLDelight] driver that wraps [KMP androidx.sqlite](AndroidX Kotlin Multiplatform SQLite) libraries. It works with any of the available implementations of AndroidX SQLite.
 
-## Gradle
+* [SQLDelight docs](https://sqldelight.github.io/sqldelight/latest/)
+* [Set up SQLite for KMP](https://developer.android.com/kotlin/multiplatform/sqlite)
+
+## Getting Started
+
+### 1. Add Sqlite Dependencies
+
+First setup SQLite dependencies following [Set up SQLite for KMP](https://developer.android.com/kotlin/multiplatform/sqlite).
+
+### 2. Add AndroidX Driver Dependency
+
+Next add the dependency to your project.
 
 ```kotlin
 repositories {
   mavenCentral()
 }
 
+// Android/JVM
 dependencies {
-  implementation("com.eygraber:sqldelight-androidx-driver:0.1.0")
+  implementation("com.eygraber:sqldelight-androidx-driver:<version>")
+}
+
+// Multiplatform
+commonMain.dependencies {
+  implementation("com.eygraber:sqldelight-androidx-driver:<version>")
 }
 ```
 
-Snapshots can be found [here](https://central.sonatype.org/publish/publish-portal-snapshots/#consuming-via-gradle).
+### 3. Configure Database
 
-## Usage
-Assuming the following configuration:
+Next configure the database.
+
+> [!IMPORTANT]
+> `generateAsync` must equal `true` since `AndroidxSqliteDriver` is a suspending driver.
 
 ```kotlin
 sqldelight {
@@ -32,44 +50,81 @@ sqldelight {
 }
 ```
 
-`generateAsync = true` is required — `AndroidxSqliteDriver` is a suspending driver
-(see [Suspending Driver](#suspending-driver) below).
+## Usage
 
-you get started by creating a `AndroidxSqliteDriver`:
+> [!TIP]
+> AndroidX team recommends `BundledSQLiteDriver` but you can use whichever one suits your needs. See [SQLite Driver Implementations](https://developer.android.com/kotlin/multiplatform/sqlite#sqlite-driver-implementations) for more info.
 
-```kotlin
-Database(
-  AndroidxSqliteDriver(
-    driver = BundledSQLiteDriver(),
-    databaseType = AndroidxSqliteDatabaseType.File("<absolute path to db file>"),
-    schema = Database.Schema,
-  )
-)
-```
+### Create the Driver and Database
 
-on Android and JVM you can pass a `File`:
+Android or JVM - Pass a `File`:
 
 ```kotlin
-Database(
-  AndroidxSqliteDriver(
-    driver = BundledSQLiteDriver(),
-    databaseType = AndroidxSqliteDatabaseType.File(File("my.db")),
-    schema = Database.Schema,
-  )
+val driver = AndroidxSqliteDriver(
+  driver = BundledSQLiteDriver(),
+  databaseType = AndroidxSqliteDatabaseType.File(File("my.db")),
+  schema = Database.Schema,
 )
+val database = Database(driver)
+
+// More database stuff...
 ```
 
-and on Android you can pass a `Context` to create the file in the app's database directory:
+Android - Use `Context` to create the file in the app's database directory:
 
 ```kotlin
-Database(
-  AndroidxSqliteDriver(
-    driver = BundledSQLiteDriver(),
-    databaseType = AndroidxSqliteDatabaseType.FileProvider(context, "my.db"),
-    schema = Database.Schema,
-  )
+val driver = AndroidxSqliteDriver(
+  driver = BundledSQLiteDriver(),
+  databaseType = AndroidxSqliteDatabaseType.FileProvider(context, "my.db"),
+  schema = Database.Schema,
 )
+val database = Database(driver)
+
+// More database stuff...
 ```
+
+Multiplatform - Create a database type factory:
+
+```kotlin
+// src/commonMain/kotlin
+expect class DatabaseTypeFactory {
+  fun createDatabaseType(): AndroidxSqliteDatabaseType
+}
+
+fun createDatabase(databaseTypeFactory: DatabaseTypeFactory): Database {
+  val driver = AndroidxSqliteDriver(
+    driver = BundledSQLiteDriver(),
+    databaseType = databaseTypeFactory.createDatabaseType(),
+    schema = Database.Schema
+  )
+  val database = Database(driver)
+  
+  // More database stuff...
+}
+
+// src/androidMain/kotlin
+actual class DatabaseTypeFactory(private val context: Context) {
+  actual fun createDatabaseType(): AndroidxSqliteDatabaseType {
+    return AndroidxSqliteDatabaseType.FileProvider(context, "my.db")
+  }
+}
+
+// src/nativeMain/kotlin
+actual class DatabaseTypeFactory {
+  actual fun createDatabaseType(): AndroidxSqliteDatabaseType {
+    return AndroidxSqliteDatabaseType.File("<absolute path to db file>")
+  }
+}
+
+// src/jvmMain/kotlin
+actual class DatabaseTypeFactory {
+  actual fun createDatabaseType(): AndroidxSqliteDatabaseType {
+    AndroidxSqliteDatabaseType.File(File("my.db"))
+  }
+}
+```
+
+### Provide OpenFlags
 
 If you want to provide `OpenFlags` to the bundled or native driver, you can use:
 
@@ -187,7 +242,7 @@ they still work — just import from `app.cash.sqldelight.coroutines` instead.
 
 ## Foreign Key Constraints
 
-When using `AndroidxSqliteDriver`, the handling of foreign key constraints during database creation and migration is 
+When using `AndroidxSqliteDriver`, the handling of foreign key constraints during database creation and migration is
 managed to ensure data integrity.
 
 If you have foreign key constraints enabled in your
@@ -200,14 +255,14 @@ After the creation or migration is complete, foreign key constraints are re-enab
 Furthermore, to verify the integrity of the foreign key relationships after these operations,
 the driver performs an additional check. If `isForeignKeyConstraintsCheckedAfterCreateOrUpdate`
 is `true` (which it is by default), a `PRAGMA foreign_key_check` is executed. If this check finds
-any violations, an `AndroidxSqliteDriver.ForeignKeyConstraintCheckException` is thrown, detailing the 
+any violations, an `AndroidxSqliteDriver.ForeignKeyConstraintCheckException` is thrown, detailing the
 specific constraints that have been violated. This helps catch any inconsistencies in your data that might
 have been introduced during the migration.
 
 > [!IMPORTANT]  
-> By default, the first 100 violations will be parsed out of the result set of 
+> By default, the first 100 violations will be parsed out of the result set of
 > `PRAGMA foreign_key_check` and stored in the `AndroidxSqliteDriver.ForeignKeyConstraintCheckException`.
-> If your use can result in a large number of violations you can adjust the max amount that will be processed via 
+> If your use can result in a large number of violations you can adjust the max amount that will be processed via
 > `AndroidxSqliteConfiguration.maxMigrationForeignKeyConstraintViolationsToReport`.
 
 ## Connection Pooling
@@ -434,3 +489,4 @@ For additional background on WAL mode and dispatcher tuning, see [WAL & Dispatch
 [SQLDelight]: https://github.com/sqldelight/sqldelight
 [WAL & Dispatchers]: https://blog.p-y.wtf/parallelism-with-android-sqlite#heading-wal-amp-dispatchers
 [Write-Ahead Logging]: https://sqlite.org/wal.html
+[releases]: https://github.com/eygraber/sqldelight-androidx-driver/releases
