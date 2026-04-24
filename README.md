@@ -1,17 +1,17 @@
 # SQLDelight AndroidX Driver
 
-[![Maven Central Version](https://img.shields.io/maven-central/v/com.eygraber/sqldelight-androidx-driver)](releases)]
+[![Maven Central](https://img.shields.io/maven-central/v/com.eygraber/sqldelight-androidx-driver)](https://github.com/eygraber/sqldelight-androidx-driver/releases)
 
-The SQLDelight AndroidX Driver provides a [SQLDelight] driver that wraps [KMP androidx.sqlite](AndroidX Kotlin Multiplatform SQLite) libraries. It works with any of the available implementations of AndroidX SQLite.
+The SQLDelight AndroidX Driver provides a [SQLDelight] driver that wraps [AndroidX Kotlin Multiplatform SQLite] libraries. It works with any of the available implementations of AndroidX SQLite.
 
-* [SQLDelight docs](https://sqldelight.github.io/sqldelight/latest/)
-* [Set up SQLite for KMP](https://developer.android.com/kotlin/multiplatform/sqlite)
+* [SQLDelight docs]
+* [Set up SQLite for KMP]
 
 ## Getting Started
 
 ### 1. Add Sqlite Dependencies
 
-First setup SQLite dependencies following [Set up SQLite for KMP](https://developer.android.com/kotlin/multiplatform/sqlite).
+First setup SQLite dependencies following [Set up SQLite for KMP].
 
 ### 2. Add AndroidX Driver Dependency
 
@@ -489,4 +489,5 @@ For additional background on WAL mode and dispatcher tuning, see [WAL & Dispatch
 [SQLDelight]: https://github.com/sqldelight/sqldelight
 [WAL & Dispatchers]: https://blog.p-y.wtf/parallelism-with-android-sqlite#heading-wal-amp-dispatchers
 [Write-Ahead Logging]: https://sqlite.org/wal.html
-[releases]: https://github.com/eygraber/sqldelight-androidx-driver/releases
+[SQLDelight docs]: https://sqldelight.github.io/sqldelight/latest/
+[Set up SQLite for KMP]: https://developer.android.com/kotlin/multiplatform/sqlite
