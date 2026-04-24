@@ -7,6 +7,11 @@ The SQLDelight AndroidX Driver provides a [SQLDelight] driver that wraps [Androi
 * [SQLDelight docs]
 * [Set up SQLite for KMP]
 
+## Migrating from the pre-async version of the driver
+
+> [!NOTE]  
+> If you are migrating from version 0.0.17 or earlier, check out the [migration guide](./PRE_ASYNC_MIGRATION_GUIDE.md)
+
 ## Getting Started
 
 ### 1. Add Sqlite Dependencies
@@ -24,14 +29,16 @@ repositories {
 
 // Android/JVM
 dependencies {
-  implementation("com.eygraber:sqldelight-androidx-driver:<version>")
+  implementation("com.eygraber:sqldelight-androidx-driver:0.1.0")
 }
 
 // Multiplatform
 commonMain.dependencies {
-  implementation("com.eygraber:sqldelight-androidx-driver:<version>")
+  implementation("com.eygraber:sqldelight-androidx-driver:0.1.0")
 }
 ```
+
+Snapshots can be found [here](https://central.sonatype.org/publish/publish-portal-snapshots/#consuming-via-gradle).
 
 ### 3. Configure Database
 
