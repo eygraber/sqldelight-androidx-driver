@@ -11,7 +11,7 @@ atomicfu = "0.32.1"
 
 cashapp-sqldelight = "2.3.2"
 
-conventions = "0.0.99"
+conventions = "0.0.100"
 
 detekt = "2.0.0-alpha.3"
 
