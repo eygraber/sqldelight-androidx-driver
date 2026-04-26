@@ -275,6 +275,73 @@ You can still pass an explicit `CoroutineContext` if you want the mapper to run 
 specific (e.g. `Dispatchers.Main` for UI state). If you prefer the sqldelight extensions,
 they still work — just import from `app.cash.sqldelight.coroutines` instead.
 
+## Testing
+
+For tests, use `AndroidxSqliteDatabaseType.Memory` — each driver instance gets its own isolated
+database, nothing is written to disk, and there's nothing to clean up between tests. In-memory
+and temporary databases automatically use `SingleReaderWriter`, so you don't need to configure
+the concurrency model.
+
+Pick the underlying `SQLiteDriver` based on where the test runs:
+
+- **JVM, Native, and Android host (unit) tests** — `BundledSQLiteDriver()` from
+  `androidx.sqlite:sqlite-bundled`. Works across all platforms with no Android runtime.
+- **Android instrumented tests** — `AndroidSQLiteDriver()` from `androidx.sqlite:sqlite-framework`
+  if you want to exercise the platform's SQLite; `BundledSQLiteDriver()` also works on device.
+
+```kotlin
+class UserRepositoryTest {
+  private lateinit var driver: SqlDriver
+  private lateinit var database: Database
+
+  @BeforeTest
+  fun setup() {
+    driver = AndroidxSqliteDriver(
+      driver = BundledSQLiteDriver(),
+      databaseType = AndroidxSqliteDatabaseType.Memory,
+      schema = Database.Schema,
+    )
+    database = Database(driver)
+  }
+
+  @AfterTest
+  fun tearDown() {
+    driver.close()
+  }
+
+  @Test
+  fun insertedUserCanBeQueried() = runTest {
+    database.userQueries.insert(id = 1, name = "Alec").await()
+
+    val user = database.userQueries.selectById(1).awaitAsOne()
+    assertEquals("Alec", user.name)
+  }
+}
+```
+
+A few things to keep in mind:
+
+- Wrap test bodies in `kotlinx.coroutines.test.runTest` so suspending driver calls have a scope to
+  run in. The driver dispatches its own work onto `Dispatchers.IO` by default — `runTest` does not
+  control that scheduling, so tests run against real concurrency (which is what you want when
+  exercising the connection pool).
+- Generated query and statement calls return `QueryResult.AsyncValue` because of
+  `generateAsync = true`. Use `.await()` on `execute` calls and `awaitAsOne` / `awaitAsOneOrNull` /
+  `awaitAsList` from `app.cash.sqldelight:async-extensions` for queries.
+- Always `driver.close()` in `@AfterTest` (or `use { }`) so the driver's dispatcher and connection
+  pool are released between tests.
+- For multiplatform projects, the `commonTest` setup above works as-is — `BundledSQLiteDriver` and
+  `AndroidxSqliteDatabaseType.Memory` are both available in common code.
+
+If you need to test against a file-backed database instead, the setup from
+[Create the Driver and Database](#create-the-driver-and-database) applies as-is — just swap
+`AndroidxSqliteDatabaseType.Memory` for `AndroidxSqliteDatabaseType.File(...)` (or `FileProvider`
+on Android). When tests run in parallel — across Gradle modules, or within a single module via
+parallel test execution — make sure each test uses a unique database filename. Two tests opening
+the same file concurrently will share state and contend on the same SQLite file locks, which leads
+to flaky failures. A common pattern is to derive the name from the test class/method or a UUID,
+and place the file in a per-test temp directory.
+
 ## Foreign Key Constraints
 
 When using `AndroidxSqliteDriver`, the handling of foreign key constraints during database creation and migration is
