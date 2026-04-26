@@ -9,6 +9,7 @@ import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.db.SqlSchema
 import kotlinx.atomicfu.locks.ReentrantLock
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlin.concurrent.Volatile
@@ -139,6 +140,9 @@ private suspend inline fun ConnectionPool.withForeignKeysDisabled(
       }
     }
   }
+  catch(c: CancellationException) {
+    throw c
+  }
   catch(e: Throwable) {
     // An exception happened during creation / migration.
     // We will try to re-enable foreign keys, and if that also fails,
@@ -149,6 +153,9 @@ private suspend inline fun ConnectionPool.withForeignKeysDisabled(
           execSQL("PRAGMA foreign_keys = ON;")
         }
       }
+    }
+    catch(c: CancellationException) {
+      throw c
     }
     catch(fkException: Throwable) {
       e.addSuppressed(fkException)
