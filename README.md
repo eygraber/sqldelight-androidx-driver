@@ -29,12 +29,12 @@ repositories {
 
 // Android/JVM
 dependencies {
-  implementation("com.eygraber:sqldelight-androidx-driver:0.1.0")
+  implementation("com.eygraber:sqldelight-androidx-driver:0.1.1")
 }
 
 // Multiplatform
 commonMain.dependencies {
-  implementation("com.eygraber:sqldelight-androidx-driver:0.1.0")
+  implementation("com.eygraber:sqldelight-androidx-driver:0.1.1")
 }
 ```
 
