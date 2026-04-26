@@ -38,7 +38,7 @@ commonMain.dependencies {
 }
 ```
 
-Snapshots can be found [here](https://central.sonatype.org/publish/publish-portal-snapshots/#consuming-via-gradle).
+See [Consuming Via Gradle] for how to add a -SNAPSHOT release.
 
 ### 3. Configure Database
 
@@ -498,3 +498,4 @@ For additional background on WAL mode and dispatcher tuning, see [WAL & Dispatch
 [Write-Ahead Logging]: https://sqlite.org/wal.html
 [SQLDelight docs]: https://sqldelight.github.io/sqldelight/latest/
 [Set up SQLite for KMP]: https://developer.android.com/kotlin/multiplatform/sqlite
+[Consuming Via Gradle]: https://central.sonatype.org/publish/publish-portal-snapshots/#consuming-via-gradle
