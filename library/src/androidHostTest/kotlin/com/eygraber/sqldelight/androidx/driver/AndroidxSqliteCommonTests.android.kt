@@ -5,8 +5,6 @@ import androidx.sqlite.SQLiteDriver
 import androidx.sqlite.driver.AndroidSQLiteDriver
 import androidx.test.core.app.ApplicationProvider
 import app.cash.sqldelight.SuspendingTransacter
-import app.cash.sqldelight.SuspendingTransacterImpl
-import app.cash.sqldelight.Transacter
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import org.junit.Assert

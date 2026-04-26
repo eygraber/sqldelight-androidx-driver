@@ -652,7 +652,7 @@ style:
   UnnecessaryReversed:
     active: true
   UnusedImport:
-    active: true
+    active: false
   UnusedParameter:
     active: true
   UnusedPrivateClass:
