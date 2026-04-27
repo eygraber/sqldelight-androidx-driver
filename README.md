@@ -7,6 +7,9 @@ The SQLDelight AndroidX Driver provides a [SQLDelight] driver that wraps [Androi
 * [SQLDelight docs]
 * [Set up SQLite for KMP]
 
+> [!TIP]
+> Interested in trying out web (`wasmJs` / `js`) support? An alpha is in progress on the [`web`](https://github.com/eygraber/sqldelight-androidx-driver/tree/web) branch — feedback welcome.
+
 ## Migrating from the pre-async version of the driver
 
 > [!NOTE]  
