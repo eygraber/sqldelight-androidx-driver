@@ -112,13 +112,17 @@ jobs:
         id: prepare_next_dev
         run: |
           sed -i -e 's/${{ env.CURRENT_VERSION }}/${{ env.NEXT_VERSION }}/g' gradle.properties && \
-            sed -i -E -e 's/sqldelight-androidx-driver(:|\/)[0-9]+\.[0-9]+\.[0-9]+/sqldelight-androidx-driver\1${{ env.RELEASE_VERSION }}/g' README.md && \
-            sed -i -E -e 's/sqldelight-coroutines-extensions(:|\/)[0-9]+\.[0-9]+\.[0-9]+/sqldelight-coroutines-extensions\1${{ env.RELEASE_VERSION }}/g' README.md
+            sed -i -E -e 's/sqldelight-androidx-driver(:|\/)[0-9]+\.[0-9]+\.[0-9]+(-alpha\.[0-9]+)?/sqldelight-androidx-driver\1${{ env.RELEASE_VERSION }}/g' README.md && \
+            sed -i -E -e 's/sqldelight-androidx-driver-opfs(:|\/)[0-9]+\.[0-9]+\.[0-9]+(-alpha\.[0-9]+)?/sqldelight-androidx-driver-opfs\1${{ env.RELEASE_VERSION }}/g' README.md && \
+            sed -i -E -e 's/sqldelight-coroutines-extensions(:|\/)[0-9]+\.[0-9]+\.[0-9]+(-alpha\.[0-9]+)?/sqldelight-coroutines-extensions\1${{ env.RELEASE_VERSION }}/g' README.md
+
+      - name: Update package-lock.json if needed
+        run: ./gradlew kotlinUpgradePackageLock kotlinWasmUpgradePackageLock --no-build-cache --no-configuration-cache --rerun-tasks
 
       - name: Commit next dev version
         id: commit_next_dev
         uses: EndBug/add-and-commit@v10
         with:
-          add: "['gradle.properties', 'README.md']"
+          add: "['gradle.properties', 'README.md', 'kotlin-js-store/package-lock.json', 'kotlin-js-store/wasm/package-lock.json']"
           default_author: github_actions
           message: "Prepare next dev version"

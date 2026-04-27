@@ -1,16 +1,9 @@
-@file:Suppress("UnusedImport") // https://github.com/detekt/detekt/issues/9269
-
 package com.eygraber.sqldelight.androidx.driver
 
-import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteConcurrencyModel.Companion.CpuCacheHitOptimizedProvider
 import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteConcurrencyModel.Companion.memoryOptimizedProvider
 import kotlinx.coroutines.CloseableCoroutineDispatcher
 import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.DelicateCoroutinesApi
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.IO
-import kotlinx.coroutines.newFixedThreadPoolContext
 
 /**
  * Defines the concurrency model for SQLite database connections, controlling how many
@@ -25,8 +18,9 @@ import kotlinx.coroutines.newFixedThreadPoolContext
  * The underlying thread will be blocked for the duration of any database operation
  * (including the entire transaction for explicit transactions).
  *
- * Defaults to the value provided by [memoryOptimizedProvider], but if you want to optimize for CPU cache hits,
- * you can use [CpuCacheHitOptimizedProvider].
+ * Defaults to the value provided by [memoryOptimizedProvider]. On non-web targets,
+ * `CpuCacheHitOptimizedProvider` is also available for workloads that prefer pinning
+ * each connection to its own thread.
  *
  * @property readerCount The number of reader connections to maintain in the pool
  */
@@ -39,21 +33,10 @@ public sealed class AndroidxSqliteConcurrencyModel {
   public companion object {
     public const val DISPATCHER_NAME: String = "AndroidxSqliteDriver"
 
-    @OptIn(DelicateCoroutinesApi::class, ExperimentalCoroutinesApi::class)
-    public val CpuCacheHitOptimizedProvider: (Int, String) -> CoroutineDispatcher = { parallelism, name ->
-      newFixedThreadPoolContext(
-        nThreads = parallelism,
-        name = name,
-      )
-    }
-
     public fun memoryOptimizedProvider(
-      dispatcher: CoroutineDispatcher = Dispatchers.IO,
+      dispatcher: CoroutineDispatcher = defaultIoDispatcher(),
     ): (Int, String) -> CoroutineDispatcher = { parallelism, name ->
-      dispatcher.limitedParallelism(
-        parallelism = parallelism,
-        name = name,
-      )
+      memoryOptimizedDispatcher(dispatcher, parallelism, name)
     }
   }
 
@@ -200,3 +183,11 @@ public sealed class AndroidxSqliteConcurrencyModel {
     }
   }
 }
+
+internal expect fun defaultIoDispatcher(): CoroutineDispatcher
+
+internal expect fun memoryOptimizedDispatcher(
+  dispatcher: CoroutineDispatcher,
+  parallelism: Int,
+  name: String,
+): CoroutineDispatcher
