@@ -1,12 +1,13 @@
 package com.eygraber.sqldelight.androidx.driver
 
 import androidx.sqlite.SQLiteStatement
+import androidx.sqlite.async.step
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlCursor
 import app.cash.sqldelight.db.SqlPreparedStatement
 
 internal interface AndroidxStatement : SqlPreparedStatement {
-  fun execute()
+  suspend fun execute()
   suspend fun <R> executeQuery(mapper: suspend (SqlCursor) -> QueryResult<R>): R
   fun reset()
   fun close()
@@ -44,7 +45,7 @@ internal class AndroidxPreparedStatement(
   override suspend fun <R> executeQuery(mapper: suspend (SqlCursor) -> QueryResult<R>): R =
     throw UnsupportedOperationException()
 
-  override fun execute() {
+  override suspend fun execute() {
     var cont = true
     while(cont) {
       cont = statement.step()
@@ -98,7 +99,7 @@ internal class AndroidxQuery(
     }
   }
 
-  override fun execute() = throw UnsupportedOperationException()
+  override suspend fun execute() = throw UnsupportedOperationException()
 
   override suspend fun <R> executeQuery(mapper: suspend (SqlCursor) -> QueryResult<R>): R {
     for(action in binds) {
@@ -122,7 +123,7 @@ internal class AndroidxQuery(
 private class AndroidxCursor(
   private val statement: SQLiteStatement,
 ) : SqlCursor {
-  override fun next(): QueryResult.Value<Boolean> = QueryResult.Value(statement.step())
+  override fun next(): QueryResult<Boolean> = stepCursor(statement)
   override fun getString(index: Int) =
     if(statement.isNull(index)) null else statement.getText(index)
 

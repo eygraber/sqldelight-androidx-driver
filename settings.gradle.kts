@@ -54,6 +54,7 @@ rootProject.name = "sqldelight-androidx-driver"
 include(":coroutines-extensions")
 include(":integration")
 include(":library")
+include(":opfs-driver")
 
 enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 
