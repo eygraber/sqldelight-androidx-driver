@@ -2,7 +2,9 @@ package com.eygraber.sqldelight.androidx.driver
 
 import androidx.collection.LruCache
 import androidx.sqlite.SQLiteConnection
-import androidx.sqlite.execSQL
+import androidx.sqlite.async.executeSQL
+import androidx.sqlite.async.prepare
+import androidx.sqlite.async.step
 import app.cash.sqldelight.SuspendingTransacterImpl
 import app.cash.sqldelight.db.AfterVersion
 import app.cash.sqldelight.db.QueryResult
@@ -100,7 +102,7 @@ internal class AndroidxSqliteDriverHolder(
                   )
                 }
 
-                transactionConnection.execSQL("PRAGMA user_version = ${schema.version}")
+                transactionConnection.executeSQL("PRAGMA user_version = ${schema.version}")
               }
             }
 
@@ -127,7 +129,7 @@ private suspend inline fun ConnectionPool.withForeignKeysDisabled(
 ) {
   if(isForeignKeyConstraintsEnabled) {
     withWriterConnection {
-      execSQL("PRAGMA foreign_keys = OFF;")
+      executeSQL("PRAGMA foreign_keys = OFF;")
     }
   }
 
@@ -136,7 +138,7 @@ private suspend inline fun ConnectionPool.withForeignKeysDisabled(
 
     if(isForeignKeyConstraintsEnabled) {
       withWriterConnection {
-        execSQL("PRAGMA foreign_keys = ON;")
+        executeSQL("PRAGMA foreign_keys = ON;")
       }
     }
   }
@@ -150,7 +152,7 @@ private suspend inline fun ConnectionPool.withForeignKeysDisabled(
     try {
       if(isForeignKeyConstraintsEnabled) {
         withWriterConnection {
-          execSQL("PRAGMA foreign_keys = ON;")
+          executeSQL("PRAGMA foreign_keys = ON;")
         }
       }
     }
@@ -166,7 +168,8 @@ private suspend inline fun ConnectionPool.withForeignKeysDisabled(
 
 private const val FOREIGN_KEY_VIOLATIONS_PREVIEW = 5
 
-private fun SQLiteConnection.reportForeignKeyViolations(
+@Suppress("RedundantSuspendModifier")
+private suspend fun SQLiteConnection.reportForeignKeyViolations(
   maxMigrationForeignKeyConstraintViolationsToReport: Int,
 ) {
   prepare("PRAGMA foreign_key_check;").use { check ->

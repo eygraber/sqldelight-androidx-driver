@@ -5,7 +5,7 @@ android-sdk-compile = "34"
 android-sdk-target = "34"
 android-sdk-min = "23"
 
-androidxSqlite = "2.6.2"
+androidxSqlite = "2.7.0-alpha03"
 
 atomicfu = "0.32.1"
 
@@ -18,6 +18,7 @@ detekt = "2.0.0-alpha.3"
 dokka = "2.2.0"
 
 kotlin = "2.3.21"
+kotlinx-browser = "0.5.0"
 kotlinx-coroutines = "1.10.2"
 
 ktlint = "1.8.0"
@@ -27,6 +28,8 @@ okio = "3.17.0"
 
 publish = "0.36.0"
 
+sqliteWasm = "3.53.0-build1"
+
 [plugins]
 conventions = { id = "com.eygraber.conventions", version.ref = "conventions" }
 sqldelight = { id = "app.cash.sqldelight", version.ref = "cashapp-sqldelight" }
@@ -34,8 +37,10 @@ sqldelight = { id = "app.cash.sqldelight", version.ref = "cashapp-sqldelight" }
 [libraries]
 androidx-collections = "androidx.collection:collection:1.6.0"
 androidx-sqlite = { module = "androidx.sqlite:sqlite", version.ref = "androidxSqlite" }
+androidx-sqliteAsync = { module = "androidx.sqlite:sqlite-async", version.ref = "androidxSqlite" }
 androidx-sqliteBundled = { module = "androidx.sqlite:sqlite-bundled", version.ref = "androidxSqlite" }
 androidx-sqliteFramework = { module = "androidx.sqlite:sqlite-framework", version.ref = "androidxSqlite" }
+androidx-sqliteWeb = { module = "androidx.sqlite:sqlite-web", version.ref = "androidxSqlite" }
 
 atomicfu = { module = "org.jetbrains.kotlinx:atomicfu", version.ref = "atomicfu" }
 
@@ -51,6 +56,7 @@ cashapp-sqldelight-coroutines = { module = "app.cash.sqldelight:coroutines-exten
 cashapp-sqldelight-dialect = { module = "app.cash.sqldelight:sqlite-3-38-dialect", version.ref = "cashapp-sqldelight" }
 cashapp-sqldelight-runtime = { module = "app.cash.sqldelight:runtime", version.ref = "cashapp-sqldelight" }
 
+kotlinx-browser = { module = "org.jetbrains.kotlinx:kotlinx-browser", version.ref = "kotlinx-browser" }
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }
 
 # just here so renovate picks it up

@@ -29,12 +29,12 @@ repositories {
 
 // Android/JVM
 dependencies {
-  implementation("com.eygraber:sqldelight-androidx-driver:0.1.1")
+  implementation("com.eygraber:sqldelight-androidx-driver:0.5.0-alpha.1")
 }
 
 // Multiplatform
 commonMain.dependencies {
-  implementation("com.eygraber:sqldelight-androidx-driver:0.1.1")
+  implementation("com.eygraber:sqldelight-androidx-driver:0.5.0-alpha.1")
 }
 ```
 
@@ -130,6 +130,59 @@ actual class DatabaseTypeFactory {
   }
 }
 ```
+
+### Multiplatform with a web target (JS / wasmJs)
+
+`androidx.sqlite:sqlite-bundled` doesn't ship a JS or wasmJs variant — on web you have to use
+`WebWorkerSQLiteDriver` (transport) plus a worker that implements its protocol. The `:opfs-driver`
+module ships such a worker, ready-made on top of `@sqlite.org/sqlite-wasm`'s OPFS VFS, so database files
+referenced by `AndroidxSqliteDatabaseType.File("name.db")` are persisted in the browser's [Origin Private File System].
+
+If your KMP project targets web in addition to Android/JVM/Native, the `SQLiteDriver` itself has to
+become an `expect`/`actual` (since the constructor differs by platform). The `databaseType` factory from
+the previous section stays the same — `AndroidxSqliteDatabaseType.File("my.db")` works on every target, including
+web, where the worker interprets the file name as an OPFS path.
+
+Add the dependency to your web source set:
+
+```kotlin
+val webMain by getting {
+  dependencies {
+    implementation("com.eygraber:sqldelight-androidx-driver-opfs:0.5.0-alpha.1")
+  }
+}
+```
+
+Then add a `SQLiteDriver` `expect`/`actual` alongside the `DatabaseTypeFactory`:
+
+```kotlin
+// src/commonMain/kotlin
+expect fun createSqliteDriver(): SQLiteDriver
+
+fun createDatabase(databaseTypeFactory: DatabaseTypeFactory): Database {
+  val driver = AndroidxSqliteDriver(
+    driver = createSqliteDriver(),
+    databaseType = databaseTypeFactory.createDatabaseType(),
+    schema = Database.Schema,
+  )
+  return Database(driver)
+}
+
+// src/nonWebMain/kotlin (or separately in androidMain / jvmMain / nativeMain)
+actual fun createSqliteDriver(): SQLiteDriver = BundledSQLiteDriver()
+
+// src/webMain/kotlin (or separately in jsMain / wasmJsMain)
+actual fun createSqliteDriver(): SQLiteDriver = WebWorkerSQLiteDriver(opfsWorker())
+```
+
+`opfsWorker()` returns a `Worker` pointing at the `sqldelight-androidx-opfs-worker.js` file the module ships
+as a JS resource — webpack copies it next to the calling JS bundle and `kotlinNpmInstall` picks up the transitive
+`@sqlite.org/sqlite-wasm` npm dep automatically. The bundled worker is a derivative of the [AndroidX example worker],
+licensed Apache 2.0.
+
+> [!NOTE]
+> If your project only targets web, you don't need `expect`/`actual` — just construct
+> `WebWorkerSQLiteDriver(opfsWorker())` directly and pass it to `AndroidxSqliteDriver`.
 
 ### Provide OpenFlags
 
@@ -229,7 +282,7 @@ dispatches each query onto its own connection pool, so wrapping every mapper in 
 
 ```kotlin
 dependencies {
-  implementation("com.eygraber:sqldelight-coroutines-extensions:0.1.0")
+  implementation("com.eygraber:sqldelight-coroutines-extensions:0.5.0-alpha.1")
 }
 ```
 
@@ -431,6 +484,10 @@ AndroidxSqliteConcurrencyModel.memoryOptimizedProvider()
 // Allocates a dedicated thread pool (via newFixedThreadPoolContext).
 // Each connection tends to stay on the same thread, which helps CPU cache locality
 // at the cost of extra OS threads.
+//
+// Only available on non-web targets — JS and wasmJs are single-threaded, so a fixed
+// thread pool has no meaning there. The provider lives in the non-web source set, so
+// it isn't visible from `commonMain` if your project also targets web.
 AndroidxSqliteConcurrencyModel.CpuCacheHitOptimizedProvider
 ```
 
@@ -491,6 +548,9 @@ This ensures all connections use the same journal mode and prevents inconsistenc
 5. **Platform differences**: Android may have different optimal settings than JVM/Native
 
 For additional background on WAL mode and dispatcher tuning, see [WAL & Dispatchers].
+
+[Origin Private File System]: https://developer.mozilla.org/en-US/docs/Web/API/File_System_API/Origin_private_file_system
+[AndroidX example worker]: https://cs.android.com/androidx/platform/frameworks/support/+/androidx-main:sqlite/sqlite-web-worker-test/web-worker/worker.js
 
 [AndroidX Kotlin Multiplatform SQLite]: https://developer.android.com/kotlin/multiplatform/sqlite
 [SQLDelight]: https://github.com/sqldelight/sqldelight
