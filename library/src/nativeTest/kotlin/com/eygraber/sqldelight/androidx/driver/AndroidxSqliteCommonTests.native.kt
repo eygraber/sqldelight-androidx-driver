@@ -29,7 +29,7 @@ actual fun androidxSqliteTestDriver(): SQLiteDriver = BundledSQLiteDriver()
 @Suppress("InjectDispatcher")
 actual val IoDispatcher: CoroutineDispatcher get() = Dispatchers.IO
 
-actual fun deleteFile(name: String) {
+actual suspend fun deleteFile(name: String) {
   FileSystem.SYSTEM.delete(name.toPath())
 }
 

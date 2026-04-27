@@ -5,4 +5,4 @@ import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 
 actual class CommonFlowExtensionsTest : FlowExtensionsTest()
 
-actual fun testSQLiteDriver(): SQLiteDriver = BundledSQLiteDriver()
+actual fun testSqliteDriver(): SQLiteDriver = BundledSQLiteDriver()
