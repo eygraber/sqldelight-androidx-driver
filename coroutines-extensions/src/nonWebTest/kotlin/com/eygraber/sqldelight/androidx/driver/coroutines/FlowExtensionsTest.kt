@@ -22,7 +22,7 @@ abstract class FlowExtensionsTest {
   @BeforeTest
   fun setup() {
     driver = AndroidxSqliteDriver(
-      driver = testSQLiteDriver(),
+      driver = testSqliteDriver(),
       databaseType = AndroidxSqliteDatabaseType.Memory,
       schema = object : SqlSchema<QueryResult.AsyncValue<Unit>> {
         override val version: Long = 1
