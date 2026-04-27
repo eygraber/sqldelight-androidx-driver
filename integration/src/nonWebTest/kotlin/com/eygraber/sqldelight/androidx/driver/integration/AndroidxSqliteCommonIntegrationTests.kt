@@ -1,3 +1,3 @@
 package com.eygraber.sqldelight.androidx.driver.integration
 
-expect fun deleteFile(name: String)
+expect suspend fun deleteFile(name: String)

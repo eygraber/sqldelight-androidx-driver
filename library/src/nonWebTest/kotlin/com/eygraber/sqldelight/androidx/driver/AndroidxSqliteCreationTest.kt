@@ -104,7 +104,7 @@ abstract class AndroidxSqliteCreationTest {
     ) = QueryResult.AsyncValue {}
   }
 
-  private inline fun withDatabase(
+  private suspend inline fun withDatabase(
     schema: SqlSchema<QueryResult.AsyncValue<Unit>>,
     dbName: String,
     noinline onCreate: SqlDriver.() -> Unit,
