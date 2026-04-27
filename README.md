@@ -229,7 +229,7 @@ dispatches each query onto its own connection pool, so wrapping every mapper in 
 
 ```kotlin
 dependencies {
-  implementation("com.eygraber:sqldelight-coroutines-extensions:0.1.0")
+  implementation("com.eygraber:sqldelight-coroutines-extensions:0.1.1")
 }
 ```
 
