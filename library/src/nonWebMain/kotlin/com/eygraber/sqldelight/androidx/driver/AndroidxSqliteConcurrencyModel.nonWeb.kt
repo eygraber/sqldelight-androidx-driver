@@ -29,7 +29,7 @@ internal actual fun memoryOptimizedDispatcher(
  * pool has no meaning there. Web users should stick with the default
  * [AndroidxSqliteConcurrencyModel.Companion.memoryOptimizedProvider].
  */
-@OptIn(DelicateCoroutinesApi::class)
+@OptIn(DelicateCoroutinesApi::class, ExperimentalCoroutinesApi::class)
 public val AndroidxSqliteConcurrencyModel.Companion.CpuCacheHitOptimizedProvider: (Int, String) -> CoroutineDispatcher
   get() = { parallelism, name ->
     newFixedThreadPoolContext(
