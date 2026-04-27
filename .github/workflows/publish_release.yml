@@ -92,6 +92,8 @@ jobs:
           name: Release ${{ env.RELEASE_VERSION }}
           tag: ${{ env.RELEASE_VERSION }}
           token: ${{ secrets.PUSH_PAT }}
+          prerelease: true
+          makeLatest: false
 
       - uses: actions/checkout@v6
         with:
