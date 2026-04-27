@@ -1,4 +1,5 @@
 import com.android.build.api.variant.HasUnitTest
+import org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi
 import org.jetbrains.kotlin.gradle.dsl.ExplicitApiMode
 
 plugins {
@@ -15,8 +16,21 @@ kotlin {
     androidNamespace = "com.eygraber.sqldelight.androidx.driver.integration",
   )
 
-  androidLibrary {
+  android {
     withHostTest {}
+  }
+
+  @OptIn(ExperimentalKotlinGradlePluginApi::class)
+  applyDefaultHierarchyTemplate {
+    common {
+      group("nonWeb") {
+        withCompilations { it.target.targetName == "android" }
+        withJvm()
+        group("native") {
+          withNative()
+        }
+      }
+    }
   }
 
   sourceSets {
@@ -30,13 +44,16 @@ kotlin {
       implementation(projects.coroutinesExtensions)
       implementation(projects.library)
 
-      implementation(libs.androidx.sqliteBundled)
       implementation(libs.cashapp.sqldelight.runtime)
 
       implementation(libs.kotlinx.coroutines.core)
 
       implementation(libs.test.kotlin)
       implementation(libs.test.kotlinx.coroutines)
+    }
+
+    named("nonWebTest").dependencies {
+      implementation(libs.androidx.sqliteBundled)
     }
 
     jvmTest.dependencies {

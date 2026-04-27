@@ -1,3 +1,5 @@
+import org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi
+
 plugins {
   id("com.android.lint")
   id("com.eygraber.conventions-kotlin-multiplatform")
@@ -12,7 +14,7 @@ kotlin {
     androidNamespace = "com.eygraber.sqldelight.androidx.driver",
   )
 
-  androidLibrary {
+  android {
     withHostTest {}
 
     withDeviceTest {
@@ -26,6 +28,19 @@ kotlin {
             testedAbi = "x86_64"
             systemImageSource = "aosp-atd"
           }
+        }
+      }
+    }
+  }
+
+  @OptIn(ExperimentalKotlinGradlePluginApi::class)
+  applyDefaultHierarchyTemplate {
+    common {
+      group("nonWeb") {
+        withCompilations { it.target.targetName == "android" }
+        withJvm()
+        group("native") {
+          withNative()
         }
       }
     }
@@ -55,6 +70,7 @@ kotlin {
       implementation(libs.androidx.collections)
 
       api(libs.androidx.sqlite)
+      api(libs.androidx.sqliteAsync)
       api(libs.cashapp.sqldelight.runtime)
       api(libs.kotlinx.coroutines.core)
 
