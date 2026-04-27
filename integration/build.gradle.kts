@@ -1,5 +1,6 @@
 import com.android.build.api.variant.HasUnitTest
 import org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi
+import org.jetbrains.kotlin.gradle.ExperimentalWasmDsl
 import org.jetbrains.kotlin.gradle.dsl.ExplicitApiMode
 
 plugins {
@@ -25,7 +26,7 @@ kotlin {
     withHostTest {}
   }
 
-  @OptIn(ExperimentalKotlinGradlePluginApi::class)
+  @OptIn(ExperimentalWasmDsl::class)
   wasmJs {
     browser {
       testTask {

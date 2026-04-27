@@ -1,4 +1,5 @@
 import org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi
+import org.jetbrains.kotlin.gradle.ExperimentalWasmDsl
 
 plugins {
   id("com.android.lint")
@@ -19,7 +20,7 @@ kotlin {
     androidNamespace = "com.eygraber.sqldelight.androidx.driver",
   )
 
-  @OptIn(ExperimentalKotlinGradlePluginApi::class)
+  @OptIn(ExperimentalWasmDsl::class)
   wasmJs {
     browser {
       testTask {
