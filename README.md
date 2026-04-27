@@ -196,6 +196,10 @@ licensed Apache 2.0.
 > If your project only targets web, you don't need `expect`/`actual` — just construct
 > `WebWorkerSQLiteDriver(opfsWorker())` directly and pass it to `AndroidxSqliteDriver`.
 
+The `wasmJs` browser pipeline is exercised end-to-end in CI for `:library`, `:integration`, and
+`:coroutines-extensions`, so SQLDelight code generation, the driver, and the OPFS-backed worker are
+all verified against the same configurations applications use in production.
+
 ### Provide OpenFlags
 
 If you want to provide `OpenFlags` to the bundled or native driver, you can use:
@@ -678,6 +682,14 @@ This ensures all connections use the same journal mode and prevents inconsistenc
 5. **Platform differences**: Android may have different optimal settings than JVM/Native
 
 For additional background on WAL mode and dispatcher tuning, see [WAL & Dispatchers].
+
+## Contributing
+
+The Apple test suite runs on macOS runners; everything else (Android host, JVM, Native, and the
+`wasmJs` browser tests) runs on Linux. The browser tests drive Karma + headless Chrome — `./gradlew
+allTests` will download Chrome via Kotlin's build infrastructure on first run, but you need a
+working X-less Chromium-compatible binary on your `PATH` for local runs to succeed (the standard
+`google-chrome-stable` / `chromium` package satisfies it).
 
 [Origin Private File System]: https://developer.mozilla.org/en-US/docs/Web/API/File_System_API/Origin_private_file_system
 [AndroidX example worker]: https://cs.android.com/androidx/platform/frameworks/support/+/androidx-main:sqlite/sqlite-web-worker-test/web-worker/worker.js
