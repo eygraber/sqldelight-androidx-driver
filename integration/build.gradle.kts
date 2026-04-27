@@ -13,11 +13,27 @@ plugins {
 kotlin {
   defaultKmpTargets(
     project = project,
+    webOptions = KmpTarget.WebOptions(
+      isNodeEnabled = false,
+      isBrowserEnabled = true,
+      isBrowserEnabledForLibraryTests = true,
+    ),
     androidNamespace = "com.eygraber.sqldelight.androidx.driver.integration",
   )
 
   android {
     withHostTest {}
+  }
+
+  @OptIn(ExperimentalKotlinGradlePluginApi::class)
+  wasmJs {
+    browser {
+      testTask {
+        useKarma {
+          useChromeHeadless()
+        }
+      }
+    }
   }
 
   @OptIn(ExperimentalKotlinGradlePluginApi::class)
@@ -63,7 +79,27 @@ kotlin {
     nativeTest.dependencies {
       implementation(libs.okio)
     }
+
+    named("wasmJsTest").dependencies {
+      implementation(projects.opfsDriver)
+      implementation(libs.androidx.sqliteWeb)
+      implementation(libs.kotlinx.browser)
+      implementation(npm("@sqlite.org/sqlite-wasm", libs.versions.sqliteWasm.get()))
+    }
   }
+}
+
+// Webpack resolves `new URL("./sqldelight-androidx-opfs-worker.js", import.meta.url)`
+// relative to the bundled output directory. Copy the worker resource into the wasmJs test
+// bundle so that path resolves at test time.
+tasks.named<Copy>("wasmJsTestProcessResources") {
+  from(project(":opfs-driver").layout.projectDirectory.dir("src/wasmJsMain/resources"))
+}
+
+// Per the Option B decision the JS target is wired up but contains no tests. Keep the test
+// task happy when there's nothing to discover.
+tasks.named<org.gradle.api.tasks.testing.AbstractTestTask>("jsBrowserTest") {
+  failOnNoDiscoveredTests = false
 }
 
 sqldelight {
