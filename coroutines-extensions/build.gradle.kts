@@ -1,3 +1,5 @@
+import org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi
+
 plugins {
   id("com.android.lint")
   id("com.eygraber.conventions-kotlin-multiplatform")
@@ -12,8 +14,21 @@ kotlin {
     androidNamespace = "com.eygraber.sqldelight.androidx.driver.coroutines",
   )
 
-  androidLibrary {
+  android {
     withHostTest {}
+  }
+
+  @OptIn(ExperimentalKotlinGradlePluginApi::class)
+  applyDefaultHierarchyTemplate {
+    common {
+      group("nonWeb") {
+        withCompilations { it.target.targetName == "android" }
+        withJvm()
+        group("native") {
+          withNative()
+        }
+      }
+    }
   }
 
   sourceSets {
