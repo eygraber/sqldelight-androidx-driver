@@ -31,7 +31,10 @@ kotlin {
     browser {
       testTask {
         useKarma {
-          useChromeHeadless()
+          // ChromeHeadlessNoSandbox so the browser starts under restricted CI runners
+          // (the default chrome-headless launcher fails to start on GitHub-hosted Linux
+          // runners without --no-sandbox).
+          useChromeHeadlessNoSandbox()
         }
       }
     }
