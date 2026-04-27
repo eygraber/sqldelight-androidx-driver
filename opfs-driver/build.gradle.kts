@@ -9,6 +9,7 @@ kotlin {
     KmpTarget.Js,
     KmpTarget.WasmJs,
     project = project,
+    ignoreDefaultTargets = true,
   )
 
   sourceSets {
