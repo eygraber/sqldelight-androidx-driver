@@ -8,4 +8,4 @@ import org.robolectric.RobolectricTestRunner
 @RunWith(RobolectricTestRunner::class)
 actual class CommonFlowExtensionsTest : FlowExtensionsTest()
 
-actual fun testSQLiteDriver(): SQLiteDriver = AndroidSQLiteDriver()
+actual fun testSqliteDriver(): SQLiteDriver = AndroidSQLiteDriver()
