@@ -20,7 +20,7 @@ fun androidxSqliteTestConnectionFactory(): AndroidxSqliteConnectionFactory =
 
 expect val IoDispatcher: CoroutineDispatcher
 
-expect fun deleteFile(name: String)
+expect suspend fun deleteFile(name: String)
 
 expect suspend inline fun <T> assertChecksThreadConfinement(
   transacter: SuspendingTransacter,

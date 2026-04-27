@@ -1,8 +1,6 @@
-package com.eygraber.sqldelight.androidx.driver.coroutines
+package com.eygraber.sqldelight.androidx.driver.integration
 
 import androidx.sqlite.SQLiteDriver
 import androidx.sqlite.driver.bundled.BundledSQLiteDriver
-
-actual class CommonFlowExtensionsTest : FlowExtensionsTest()
 
 actual fun testSqliteDriver(): SQLiteDriver = BundledSQLiteDriver()

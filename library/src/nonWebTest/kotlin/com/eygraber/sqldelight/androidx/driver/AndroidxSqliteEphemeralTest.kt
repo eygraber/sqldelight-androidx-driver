@@ -56,7 +56,7 @@ abstract class AndroidxSqliteEphemeralTest {
     )
   }
 
-  private inline fun withDatabase(
+  private suspend inline fun withDatabase(
     type: Type,
     dbName: String? = null,
     deleteDbBeforeRun: Boolean = true,
