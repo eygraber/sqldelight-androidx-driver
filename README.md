@@ -53,7 +53,7 @@ Next configure the database.
 ```kotlin
 sqldelight {
   databases {
-    create("Database") {
+    register("Database") {
       generateAsync = true
     }
   }
@@ -163,7 +163,7 @@ It will handle calling the `create` and `migrate` functions on your schema for y
 ```kotlin
 sqldelight {
   databases {
-    create("Database") {
+    register("Database") {
       generateAsync = true
     }
   }
