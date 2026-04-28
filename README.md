@@ -1,6 +1,6 @@
 # SQLDelight AndroidX Driver
 
-[![Maven Central](https://img.shields.io/maven-central/v/com.eygraber/sqldelight-androidx-driver)](https://github.com/eygraber/sqldelight-androidx-driver/releases)
+[![Maven Central](https://img.shields.io/maven-central/v/com.eygraber/sqldelight-androidx-driver)](https://central.sonatype.com/artifact/com.eygraber/sqldelight-androidx-driver)
 
 The SQLDelight AndroidX Driver provides a [SQLDelight] driver that wraps [AndroidX Kotlin Multiplatform SQLite] libraries. It works with any of the available implementations of AndroidX SQLite.
 
