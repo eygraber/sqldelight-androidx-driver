@@ -53,7 +53,7 @@ sqldelight {
   linkSqlite = false
 
   databases {
-    create("AndroidXDb") {
+    register("AndroidXDb") {
       dialect(libs.cashapp.sqldelight.dialect)
 
       packageName = "com.eygraber.sqldelight.androidx.driver.integration"

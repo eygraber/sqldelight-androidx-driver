@@ -28,7 +28,7 @@ This is the biggest change. Set `generateAsync = true` on your database:
   ```kotlin
   sqldelight {
     databases {
-      create("Database") {
+      register("Database") {
         generateAsync = true
       }
     }
