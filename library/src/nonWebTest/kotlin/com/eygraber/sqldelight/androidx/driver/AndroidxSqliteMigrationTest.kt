@@ -4,7 +4,9 @@ import app.cash.sqldelight.db.AfterVersion
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.db.SqlSchema
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import kotlin.random.Random
 import kotlin.random.nextULong
 import kotlin.test.Test
@@ -998,9 +1000,11 @@ abstract class AndroidxSqliteMigrationTest {
       assertTrue(callbackRan)
     }
     finally {
-      deleteFile(fullDbName)
-      deleteFile("$fullDbName-shm")
-      deleteFile("$fullDbName-wal")
+      withContext(NonCancellable) {
+        deleteFile(fullDbName)
+        deleteFile("$fullDbName-shm")
+        deleteFile("$fullDbName-wal")
+      }
     }
   }
 
@@ -1077,9 +1081,11 @@ abstract class AndroidxSqliteMigrationTest {
       }
     }
     finally {
-      deleteFile(fullDbName)
-      deleteFile("$fullDbName-shm")
-      deleteFile("$fullDbName-wal")
+      withContext(NonCancellable) {
+        deleteFile(fullDbName)
+        deleteFile("$fullDbName-shm")
+        deleteFile("$fullDbName-wal")
+      }
     }
   }
 
@@ -1126,7 +1132,7 @@ abstract class AndroidxSqliteMigrationTest {
           sql = "SELECT version FROM marker ORDER BY version",
           mapper = { cursor ->
             QueryResult.AsyncValue {
-              while(cursor.next().value) versions += cursor.getLong(0)!!
+              while(cursor.next().value) versions += checkNotNull(cursor.getLong(0))
             }
           },
           parameters = 0,
@@ -1136,9 +1142,11 @@ abstract class AndroidxSqliteMigrationTest {
       }
     }
     finally {
-      deleteFile(fullDbName)
-      deleteFile("$fullDbName-shm")
-      deleteFile("$fullDbName-wal")
+      withContext(NonCancellable) {
+        deleteFile(fullDbName)
+        deleteFile("$fullDbName-shm")
+        deleteFile("$fullDbName-wal")
+      }
     }
   }
 }
