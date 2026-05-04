@@ -4,18 +4,14 @@ import androidx.collection.LruCache
 import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.execSQL
 import app.cash.sqldelight.SuspendingTransacterImpl
-import app.cash.sqldelight.db.AfterVersion
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.db.SqlSchema
 import kotlinx.atomicfu.locks.ReentrantLock
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlin.concurrent.Volatile
-import kotlin.coroutines.ContinuationInterceptor
 
 internal class AndroidxSqliteDriverHolder(
   private val connectionPool: ConnectionPool,
@@ -81,27 +77,50 @@ internal class AndroidxSqliteDriverHolder(
               isForeignKeyConstraintsEnabled = isForeignKeyConstraintsEnabled,
             ) {
               transacter.transaction {
-                // Capture the migration's coroutine context (minus the dispatcher) inside the
-                // transaction so the non-suspending AfterVersion bridge below can re-enter it.
-                // This propagates the TransactionElement into the suspend block, letting its DB
-                // ops reuse the migration's writer instead of deadlocking on writerMutex by
-                // trying to acquire a fresh one.
-                val capturedMigrationContext = currentCoroutineContext().minusKey(ContinuationInterceptor)
-                val bridgedCallbacks = Array(migrationCallbacks.size) { i ->
-                  val cb = migrationCallbacks[i]
-                  AfterVersion(cb.afterVersion) { driver ->
-                    runBlocking(capturedMigrationContext) { cb.block(driver) }
-                  }
-                }
-
                 when {
                   isCreate -> schema.create(executingDriver).await()
-                  else -> schema.migrate(
-                    driver = executingDriver,
-                    oldVersion = currentVersion,
-                    newVersion = schema.version,
-                    callbacks = bridgedCallbacks,
-                  ).await()
+                  else -> {
+                    // If there are no migration callbacks, rely on SQLDelight to handle migrating all the versions.
+                    // Otherwise, step through versions one at a time so the suspend migration callbacks can be
+                    // invoked directly between steps. We're already inside transacter.transaction { ... }, so the
+                    // TransactionElement is in the current coroutine context — the suspend callback inherits it and
+                    // its DB ops reuse the migration's writer.
+                    val callbacksByVersion = migrationCallbacks.filter { callback ->
+                      callback.afterVersion in currentVersion..<schema.version
+                    }.sortedBy { it.afterVersion }.groupBy { it.afterVersion }
+
+                    if(callbacksByVersion.isEmpty()) {
+                      schema.migrate(
+                        driver = executingDriver,
+                        oldVersion = currentVersion,
+                        newVersion = schema.version,
+                      ).await()
+                    }
+                    else {
+                      var lastMigrated = currentVersion
+                      callbacksByVersion.forEach { (afterVersion, callbacks) ->
+                        val targetVersion = afterVersion + 1
+                        if(targetVersion > lastMigrated) {
+                          schema.migrate(
+                            driver = executingDriver,
+                            oldVersion = lastMigrated,
+                            newVersion = targetVersion,
+                          ).await()
+                          lastMigrated = targetVersion
+                        }
+
+                        callbacks.forEach { cb -> cb.block(executingDriver) }
+                      }
+
+                      if(lastMigrated < schema.version) {
+                        schema.migrate(
+                          driver = executingDriver,
+                          oldVersion = lastMigrated,
+                          newVersion = schema.version,
+                        ).await()
+                      }
+                    }
+                  }
                 }
 
                 val transactionConnection = requireNotNull(
