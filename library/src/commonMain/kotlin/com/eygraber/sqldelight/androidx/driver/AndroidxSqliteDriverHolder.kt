@@ -10,9 +10,12 @@ import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.db.SqlSchema
 import kotlinx.atomicfu.locks.ReentrantLock
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlin.concurrent.Volatile
+import kotlin.coroutines.ContinuationInterceptor
 
 internal class AndroidxSqliteDriverHolder(
   private val connectionPool: ConnectionPool,
@@ -25,10 +28,10 @@ internal class AndroidxSqliteDriverHolder(
   private val maxMigrationForeignKeyConstraintViolationsToReport: Int,
   private val migrateEmptySchema: Boolean = false,
   private val onConfigure: suspend AndroidxSqliteConfigurableDriver.() -> Unit = {},
-  private val onCreate: SqlDriver.() -> Unit = {},
-  private val onUpdate: SqlDriver.(Long, Long) -> Unit = { _, _ -> },
-  private val onOpen: SqlDriver.() -> Unit = {},
-  private val migrationCallbacks: Array<out AfterVersion>,
+  private val onCreate: suspend SqlDriver.() -> Unit = {},
+  private val onUpdate: suspend SqlDriver.(Long, Long) -> Unit = { _, _ -> },
+  private val onOpen: suspend SqlDriver.() -> Unit = {},
+  private val migrationCallbacks: Array<out AndroidxSqliteAfterVersion>,
 ) {
   private val executingDriver by lazy {
     AndroidxSqliteExecutingDriver(
@@ -78,13 +81,26 @@ internal class AndroidxSqliteDriverHolder(
               isForeignKeyConstraintsEnabled = isForeignKeyConstraintsEnabled,
             ) {
               transacter.transaction {
+                // Capture the migration's coroutine context (minus the dispatcher) inside the
+                // transaction so the non-suspending AfterVersion bridge below can re-enter it.
+                // This propagates the TransactionElement into the suspend block, letting its DB
+                // ops reuse the migration's writer instead of deadlocking on writerMutex by
+                // trying to acquire a fresh one.
+                val capturedMigrationContext = currentCoroutineContext().minusKey(ContinuationInterceptor)
+                val bridgedCallbacks = Array(migrationCallbacks.size) { i ->
+                  val cb = migrationCallbacks[i]
+                  AfterVersion(cb.afterVersion) { driver ->
+                    runBlocking(capturedMigrationContext) { cb.block(driver) }
+                  }
+                }
+
                 when {
                   isCreate -> schema.create(executingDriver).await()
                   else -> schema.migrate(
                     driver = executingDriver,
                     oldVersion = currentVersion,
                     newVersion = schema.version,
-                    callbacks = migrationCallbacks,
+                    callbacks = bridgedCallbacks,
                   ).await()
                 }
 
