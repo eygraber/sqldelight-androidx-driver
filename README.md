@@ -209,18 +209,43 @@ any queries execute. If you close the driver and construct a new one against the
 `onConfigure` and `onOpen` run again for the new instance; `onCreate` and `onUpdate` only run if
 the schema actually needs to be created or migrated.
 
-- `onConfigure` runs first, before any schema work. It's the only suspending callback and is the
-  right place to override pragmas that aren't covered by `AndroidxSqliteConfiguration`.
+- `onConfigure` runs first, before any schema work. It's the right place to override pragmas
+  that aren't covered by `AndroidxSqliteConfiguration`.
 - `onCreate` runs only when the database is created for the first time, after `SqlSchema.create`
   has committed.
 - `onUpdate` runs only when the schema version has increased, after `SqlSchema.migrate` has
   committed.
 - `onOpen` runs on every first interaction, after any create/migrate work.
 
-To seed data or run additional SQL during create or migrate, put it in your
-`SqlSchema.create` / `SqlSchema.migrate` — those run inside a driver-managed transaction.
-`onCreate`, `onUpdate`, and `onOpen` are non-suspending and meant for things like logging or
-updating in-memory state.
+All four callbacks are `suspend` lambdas, so you can `await()` driver operations directly inside
+them. Note that `onCreate`, `onUpdate`, and `onOpen` run *after* the create/migrate transaction
+has committed — they aren't part of it. To seed data or run additional SQL inside the
+create/migrate transaction, put it in your `SqlSchema.create` / `SqlSchema.migrate`, or use
+`migrationCallbacks` (see below).
+
+### Migration Callbacks
+
+To run code at specific schema versions during migration (the equivalent of SQLDelight's
+`AfterVersion`), pass `AndroidxSqliteAfterVersion` instances to `migrationCallbacks`:
+
+```kotlin
+AndroidxSqliteDriver(
+  driver = BundledSQLiteDriver(),
+  databaseType = AndroidxSqliteDatabaseType.File("my.db"),
+  schema = Database.Schema,
+  migrationCallbacks = arrayOf(
+    AndroidxSqliteAfterVersion(afterVersion = 3) { driver ->
+      // Suspending. Runs inside the migration's transaction, on its writer connection.
+      driver.execute(null, "INSERT INTO settings(key, value) VALUES ('feature_x', 'on')", 0).await()
+    },
+  ),
+)
+```
+
+The callback's `block` is `suspend (SqlDriver) -> Unit`. The driver bridges the migration's
+coroutine context into it so DB ops reuse the migration's writer instead of trying to acquire a
+fresh one (which would deadlock). If the callback throws, the entire migration transaction rolls
+back.
 
 ### Flow Extensions
 

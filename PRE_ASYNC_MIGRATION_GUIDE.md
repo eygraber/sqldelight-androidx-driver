@@ -175,8 +175,9 @@ If you pass an `onConfigure` callback, it can now call suspending functions dire
   )
   ```
 
-`onCreate`, `onUpdate`, and `onOpen` remain non-suspending — use them for logging or in-memory bookkeeping only. Any SQL you need during first-time creation or migration should be in
-your `SqlSchema.create` / `SqlSchema.migrate`, which run inside a driver-managed transaction.
+`onCreate`, `onUpdate`, and `onOpen` are now `suspend` lambdas, so you can `await()` driver operations directly. They run *after* the create/migrate transaction has committed and are not
+part of it. To run SQL inside the create/migrate transaction, put it in your `SqlSchema.create` / `SqlSchema.migrate`, or use `migrationCallbacks` (`AndroidxSqliteAfterVersion`) for code keyed
+to a specific version.
 
 ## 10. (Optional) Use the new Flow extensions artifact
 

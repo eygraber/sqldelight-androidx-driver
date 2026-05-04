@@ -107,9 +107,9 @@ abstract class AndroidxSqliteMigrationTest {
   private inline fun withDatabase(
     schema: SqlSchema<QueryResult.AsyncValue<Unit>>,
     dbName: String,
-    noinline onCreate: SqlDriver.() -> Unit,
-    noinline onUpdate: SqlDriver.(Long, Long) -> Unit,
-    noinline onOpen: SqlDriver.() -> Unit,
+    noinline onCreate: suspend SqlDriver.() -> Unit,
+    noinline onUpdate: suspend SqlDriver.(Long, Long) -> Unit,
+    noinline onOpen: suspend SqlDriver.() -> Unit,
     noinline onConfigure: suspend AndroidxSqliteConfigurableDriver.() -> Unit = {
       setJournalMode(SqliteJournalMode.WAL)
     },
@@ -912,6 +912,233 @@ abstract class AndroidxSqliteMigrationTest {
           parameters = 0,
         ).await()
       }
+    }
+  }
+
+  private fun getCallbackInvokingSchema(
+    initialVersion: Long = 1,
+  ) = object : SqlSchema<QueryResult.AsyncValue<Unit>> {
+    override var version: Long = initialVersion
+
+    override fun create(driver: SqlDriver): QueryResult.AsyncValue<Unit> = QueryResult.AsyncValue {
+      driver.execute(
+        null,
+        "CREATE TABLE marker (version INTEGER NOT NULL)",
+        0,
+      ).await()
+    }
+
+    override fun migrate(
+      driver: SqlDriver,
+      oldVersion: Long,
+      newVersion: Long,
+      vararg callbacks: AfterVersion,
+    ): QueryResult.AsyncValue<Unit> = QueryResult.AsyncValue {
+      var v = oldVersion
+      while(v < newVersion) {
+        callbacks
+          .filter { it.afterVersion == v }
+          .forEach { it.block(driver) }
+        v++
+      }
+    }
+  }
+
+  @Test
+  fun `migration callbacks can do db work without deadlocking`() = runTest {
+    val schema = getCallbackInvokingSchema()
+    val dbName = Random.nextULong().toHexString()
+    val fullDbName = "${this::class.qualifiedName.orEmpty()}.$dbName.db"
+
+    deleteFile(fullDbName)
+    deleteFile("$fullDbName-shm")
+    deleteFile("$fullDbName-wal")
+
+    try {
+      // create
+      AndroidxSqliteDriver(
+        connectionFactory = androidxSqliteTestConnectionFactory(),
+        databaseType = createDatabaseType(fullDbName),
+        schema = schema,
+      ).apply {
+        execute(null, "PRAGMA user_version;", 0).await()
+        close()
+      }
+
+      schema.version++
+
+      var callbackRan = false
+      AndroidxSqliteDriver(
+        connectionFactory = androidxSqliteTestConnectionFactory(),
+        databaseType = createDatabaseType(fullDbName),
+        schema = schema,
+        migrationCallbacks = arrayOf(
+          AndroidxSqliteAfterVersion(afterVersion = 1) { driver ->
+            callbackRan = true
+            driver.execute(
+              null,
+              "INSERT INTO marker(version) VALUES (99)",
+              0,
+            ).await()
+          },
+        ),
+      ).apply {
+        execute(null, "PRAGMA user_version;", 0).await()
+        val v = executeQuery(
+          identifier = null,
+          sql = "SELECT version FROM marker WHERE version = 99",
+          mapper = { cursor ->
+            QueryResult.Value(if(cursor.next().value) cursor.getLong(0) else null)
+          },
+          parameters = 0,
+        ).await()
+        assertEquals(99L, v)
+        close()
+      }
+      assertTrue(callbackRan)
+    }
+    finally {
+      deleteFile(fullDbName)
+      deleteFile("$fullDbName-shm")
+      deleteFile("$fullDbName-wal")
+    }
+  }
+
+  @Test
+  fun `migration callback throwing rolls back the migration`() = runTest {
+    val schema = getCallbackInvokingSchema()
+    val dbName = Random.nextULong().toHexString()
+    val fullDbName = "${this::class.qualifiedName.orEmpty()}.$dbName.db"
+
+    deleteFile(fullDbName)
+    deleteFile("$fullDbName-shm")
+    deleteFile("$fullDbName-wal")
+
+    try {
+      // create
+      AndroidxSqliteDriver(
+        connectionFactory = androidxSqliteTestConnectionFactory(),
+        databaseType = createDatabaseType(fullDbName),
+        schema = schema,
+      ).apply {
+        execute(null, "PRAGMA user_version;", 0).await()
+        close()
+      }
+
+      schema.version++
+
+      assertFailsWith<RuntimeException> {
+        AndroidxSqliteDriver(
+          connectionFactory = androidxSqliteTestConnectionFactory(),
+          databaseType = createDatabaseType(fullDbName),
+          schema = schema,
+          migrationCallbacks = arrayOf(
+            AndroidxSqliteAfterVersion(afterVersion = 1) { driver ->
+              driver.execute(
+                null,
+                "INSERT INTO marker(version) VALUES (99)",
+                0,
+              ).await()
+              throw RuntimeException("rollback")
+            },
+          ),
+        ).apply {
+          execute(null, "PRAGMA user_version;", 0).await()
+        }
+      }
+
+      // version still at 1 and the row was rolled back
+      schema.version = 1
+      AndroidxSqliteDriver(
+        connectionFactory = androidxSqliteTestConnectionFactory(),
+        databaseType = createDatabaseType(fullDbName),
+        schema = schema,
+      ).apply {
+        val version = executeQuery(
+          identifier = null,
+          sql = "PRAGMA user_version;",
+          mapper = { cursor ->
+            QueryResult.Value(if(cursor.next().value) cursor.getLong(0) else 0L)
+          },
+          parameters = 0,
+        ).await()
+        assertEquals(1L, version)
+
+        val count = executeQuery(
+          identifier = null,
+          sql = "SELECT COUNT(*) FROM marker WHERE version = 99",
+          mapper = { cursor ->
+            QueryResult.Value(if(cursor.next().value) cursor.getLong(0) else 0L)
+          },
+          parameters = 0,
+        ).await()
+        assertEquals(0L, count)
+        close()
+      }
+    }
+    finally {
+      deleteFile(fullDbName)
+      deleteFile("$fullDbName-shm")
+      deleteFile("$fullDbName-wal")
+    }
+  }
+
+  @Test
+  fun `multiple migration callbacks fire at their respective versions`() = runTest {
+    val schema = getCallbackInvokingSchema()
+
+    val dbName = Random.nextULong().toHexString()
+    val fullDbName = "${this::class.qualifiedName.orEmpty()}.$dbName.db"
+
+    deleteFile(fullDbName)
+    deleteFile("$fullDbName-shm")
+    deleteFile("$fullDbName-wal")
+
+    try {
+      // create at v1
+      AndroidxSqliteDriver(
+        connectionFactory = androidxSqliteTestConnectionFactory(),
+        databaseType = createDatabaseType(fullDbName),
+        schema = schema,
+      ).apply {
+        execute(null, "PRAGMA user_version;", 0).await()
+        close()
+      }
+
+      schema.version = 3
+
+      AndroidxSqliteDriver(
+        connectionFactory = androidxSqliteTestConnectionFactory(),
+        databaseType = createDatabaseType(fullDbName),
+        schema = schema,
+        migrationCallbacks = arrayOf(
+          AndroidxSqliteAfterVersion(afterVersion = 1) { driver ->
+            driver.execute(null, "INSERT INTO marker VALUES (1)", 0).await()
+          },
+          AndroidxSqliteAfterVersion(afterVersion = 2) { driver ->
+            driver.execute(null, "INSERT INTO marker VALUES (2)", 0).await()
+          },
+        ),
+      ).apply {
+        val versions = mutableListOf<Long>()
+        executeQuery(
+          identifier = null,
+          sql = "SELECT version FROM marker ORDER BY version",
+          mapper = { cursor ->
+            QueryResult.AsyncValue {
+              while(cursor.next().value) versions += cursor.getLong(0)!!
+            }
+          },
+          parameters = 0,
+        ).await()
+        assertContentEquals(listOf(1L, 2L), versions)
+        close()
+      }
+    }
+    finally {
+      deleteFile(fullDbName)
+      deleteFile("$fullDbName-shm")
+      deleteFile("$fullDbName-wal")
     }
   }
 }

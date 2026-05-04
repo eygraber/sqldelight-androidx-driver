@@ -8,7 +8,6 @@ import androidx.sqlite.SQLiteDriver
 import app.cash.sqldelight.Query
 import app.cash.sqldelight.SuspendingTransacter
 import app.cash.sqldelight.Transacter
-import app.cash.sqldelight.db.AfterVersion
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlCursor
 import app.cash.sqldelight.db.SqlDriver
@@ -51,7 +50,7 @@ public class AndroidxSqliteDriver @VisibleForTesting(otherwise = PRIVATE) intern
    *
    * **Warning:** The [SqlDriver] receiver **must not** escape the callback.
    */
-  private val onCreate: SqlDriver.() -> Unit = {},
+  private val onCreate: suspend SqlDriver.() -> Unit = {},
   /**
    * A callback invoked when the database is upgraded.
    *
@@ -59,7 +58,7 @@ public class AndroidxSqliteDriver @VisibleForTesting(otherwise = PRIVATE) intern
    *
    * **Warning:** The [SqlDriver] receiver **must not** escape the callback.
    */
-  private val onUpdate: SqlDriver.(Long, Long) -> Unit = { _, _ -> },
+  private val onUpdate: suspend SqlDriver.(Long, Long) -> Unit = { _, _ -> },
   /**
    * A callback invoked when the database has been opened.
    *
@@ -67,9 +66,9 @@ public class AndroidxSqliteDriver @VisibleForTesting(otherwise = PRIVATE) intern
    *
    * **Warning:** The [SqlDriver] receiver **must not** escape the callback.
    */
-  private val onOpen: SqlDriver.() -> Unit = {},
+  private val onOpen: suspend SqlDriver.() -> Unit = {},
   overridingConnectionPool: ConnectionPool? = null,
-  vararg migrationCallbacks: AfterVersion,
+  vararg migrationCallbacks: AndroidxSqliteAfterVersion,
 ) : SqlDriver, SuspendingTransacter.TransactionDispatcher {
   private val statementsCache = HashMap<SQLiteConnection, LruCache<Int, AndroidxStatement>>()
   private val statementsCacheLock = ReentrantLock()
@@ -164,7 +163,7 @@ public class AndroidxSqliteDriver @VisibleForTesting(otherwise = PRIVATE) intern
      *
      * **Warning:** The [SqlDriver] receiver **must not** escape the callback.
      */
-    onCreate: SqlDriver.() -> Unit = {},
+    onCreate: suspend SqlDriver.() -> Unit = {},
     /**
      * A callback invoked when the database is upgraded.
      *
@@ -172,7 +171,7 @@ public class AndroidxSqliteDriver @VisibleForTesting(otherwise = PRIVATE) intern
      *
      * **Warning:** The [SqlDriver] receiver **must not** escape the callback.
      */
-    onUpdate: SqlDriver.(Long, Long) -> Unit = { _, _ -> },
+    onUpdate: suspend SqlDriver.(Long, Long) -> Unit = { _, _ -> },
     /**
      * A callback invoked when the database has been opened.
      *
@@ -180,8 +179,8 @@ public class AndroidxSqliteDriver @VisibleForTesting(otherwise = PRIVATE) intern
      *
      * **Warning:** The [SqlDriver] receiver **must not** escape the callback.
      */
-    onOpen: SqlDriver.() -> Unit = {},
-    vararg migrationCallbacks: AfterVersion,
+    onOpen: suspend SqlDriver.() -> Unit = {},
+    vararg migrationCallbacks: AndroidxSqliteAfterVersion,
   ) : this(
     connectionFactory = connectionFactory,
     databaseType = databaseType,
@@ -220,7 +219,7 @@ public class AndroidxSqliteDriver @VisibleForTesting(otherwise = PRIVATE) intern
      *
      * **Warning:** The [SqlDriver] receiver **must not** escape the callback.
      */
-    onCreate: SqlDriver.() -> Unit = {},
+    onCreate: suspend SqlDriver.() -> Unit = {},
     /**
      * A callback invoked when the database is upgraded.
      *
@@ -228,7 +227,7 @@ public class AndroidxSqliteDriver @VisibleForTesting(otherwise = PRIVATE) intern
      *
      * **Warning:** The [SqlDriver] receiver **must not** escape the callback.
      */
-    onUpdate: SqlDriver.(Long, Long) -> Unit = { _, _ -> },
+    onUpdate: suspend SqlDriver.(Long, Long) -> Unit = { _, _ -> },
     /**
      * A callback invoked when the database has been opened.
      *
@@ -236,8 +235,8 @@ public class AndroidxSqliteDriver @VisibleForTesting(otherwise = PRIVATE) intern
      *
      * **Warning:** The [SqlDriver] receiver **must not** escape the callback.
      */
-    onOpen: SqlDriver.() -> Unit = {},
-    vararg migrationCallbacks: AfterVersion,
+    onOpen: suspend SqlDriver.() -> Unit = {},
+    vararg migrationCallbacks: AndroidxSqliteAfterVersion,
   ) : this(
     connectionFactory = DefaultAndroidxSqliteConnectionFactory(driver),
     databaseType = databaseType,

@@ -107,9 +107,9 @@ abstract class AndroidxSqliteCreationTest {
   private inline fun withDatabase(
     schema: SqlSchema<QueryResult.AsyncValue<Unit>>,
     dbName: String,
-    noinline onCreate: SqlDriver.() -> Unit,
-    noinline onUpdate: SqlDriver.(Long, Long) -> Unit,
-    noinline onOpen: SqlDriver.() -> Unit,
+    noinline onCreate: suspend SqlDriver.() -> Unit,
+    noinline onUpdate: suspend SqlDriver.(Long, Long) -> Unit,
+    noinline onOpen: suspend SqlDriver.() -> Unit,
     noinline onConfigure: suspend AndroidxSqliteConfigurableDriver.() -> Unit = {
       setJournalMode(SqliteJournalMode.WAL)
     },
