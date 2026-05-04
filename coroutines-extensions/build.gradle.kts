@@ -95,17 +95,9 @@ kotlin {
   }
 }
 
-// Webpack resolves `new URL("./sqldelight-androidx-opfs-worker.js", import.meta.url)`
-// relative to the bundled output directory. Copy the worker resource into the wasmJs test
-// bundle so that path resolves at test time.
-tasks.named<Copy>("wasmJsTestProcessResources") {
-  from(project(":opfs-driver").layout.projectDirectory.dir("src/wasmJsMain/resources"))
-}
-
-// Per the Option B decision the JS target is wired up but tests run only on wasmJs. The JS
-// test compilation must contain expect/actual stubs to satisfy the contract, which means the
-// JS test task picks up the inherited test methods even though they can't run (the stub
-// driver throws). Skip the task entirely.
+// Web tests run only on wasmJs. The JS test compilation needs expect/actual stubs to satisfy
+// the contract, which makes the JS test task pick up the inherited test methods — but the stub
+// driver throws if any of them actually run, so disable the JS test tasks.
 tasks.named("jsBrowserTest") {
   enabled = false
 }
