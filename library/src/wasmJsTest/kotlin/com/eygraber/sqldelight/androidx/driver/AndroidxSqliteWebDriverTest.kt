@@ -43,6 +43,7 @@ class AndroidxSqliteWebDriverTest {
 
   @AfterTest
   fun cleanup() = runTest {
+    terminateTestWorkers()
     createdFiles.toList().forEach { deleteOpfsFile(it) }
     createdFiles.clear()
   }
