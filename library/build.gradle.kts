@@ -124,10 +124,3 @@ kotlin {
     }
   }
 }
-
-// Webpack resolves `new URL("./sqldelight-androidx-opfs-worker.js", import.meta.url)`
-// relative to the bundled output directory. Copy the worker resource into the wasmJs test
-// bundle so that path resolves at test time.
-tasks.named<Copy>("wasmJsTestProcessResources") {
-  from(project(":opfs-driver").layout.projectDirectory.dir("src/wasmJsMain/resources"))
-}

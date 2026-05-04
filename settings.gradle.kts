@@ -55,6 +55,7 @@ include(":coroutines-extensions")
 include(":integration")
 include(":library")
 include(":opfs-driver")
+include(":opfs-worker-impl")
 
 enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 
