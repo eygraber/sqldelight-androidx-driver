@@ -289,6 +289,32 @@ Pick the underlying `SQLiteDriver` based on where the test runs:
 - **Android instrumented tests** — `AndroidSQLiteDriver()` from `androidx.sqlite:sqlite-framework`
   if you want to exercise the platform's SQLite; `BundledSQLiteDriver()` also works on device.
 
+> [!IMPORTANT]
+> For Android **host** (unit) tests — the ones that run on a JVM under
+> `src/androidHostTest` / `src/test`, not on a device — the Android variant of
+> `androidx.sqlite:sqlite-bundled` is what gets resolved, and it doesn't ship the JVM native
+> binaries `BundledSQLiteDriver()` needs. The test will load the driver, fail to find a native
+> library for your host OS, and crash. You'll probably need to substitute the Android artifact
+> with its `-jvm` counterpart, but only for the unit test runtime classpath:
+>
+> ```kotlin
+> import com.android.build.api.variant.HasUnitTest
+>
+> androidComponents {
+>   onVariants { variant ->
+>     (variant as HasUnitTest).unitTest?.let { unitTest ->
+>       with(unitTest.runtimeConfiguration.resolutionStrategy.dependencySubstitution) {
+>         substitute(module("androidx.sqlite:sqlite-bundled:<version>"))
+>           .using(module("androidx.sqlite:sqlite-bundled-jvm:<version>"))
+>       }
+>     }
+>   }
+> }
+> ```
+>
+> The production Android variant is left untouched — this only swaps in the JVM artifact for the
+> host test JVM that Gradle spins up.
+
 ```kotlin
 class UserRepositoryTest {
   private lateinit var driver: SqlDriver
