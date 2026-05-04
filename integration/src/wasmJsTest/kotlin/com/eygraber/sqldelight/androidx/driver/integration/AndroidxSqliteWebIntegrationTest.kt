@@ -6,12 +6,16 @@ import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteDatabaseType
 import kotlinx.coroutines.test.runTest
 import kotlin.random.Random
 import kotlin.random.nextULong
+import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
 class AndroidxSqliteWebIntegrationTest : AndroidxSqliteIntegrationTest() {
   override var type: AndroidxSqliteDatabaseType =
     AndroidxSqliteDatabaseType.File("integration-${Random.nextULong()}.db")
+
+  @AfterTest
+  fun terminateWorker() = runTest { terminateAndSettleTestWorkers() }
 
   @Test
   fun insertedRowsAreVisibleViaSqlDelightGeneratedQueries() = runTest {
