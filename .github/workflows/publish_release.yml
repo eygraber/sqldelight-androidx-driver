@@ -35,6 +35,9 @@ jobs:
         with:
           gradle-version: wrapper
 
+      - name: Regenerate package locks for release version
+        run: ./gradlew kotlinUpgradePackageLock kotlinWasmUpgradePackageLock --no-build-cache --no-configuration-cache --rerun-tasks -Pversion=${{ env.RELEASE_VERSION }}
+
       - name: Publish the artifacts
         env:
           ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
