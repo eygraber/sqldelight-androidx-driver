@@ -32,12 +32,12 @@ repositories {
 
 // Android/JVM
 dependencies {
-  implementation("com.eygraber:sqldelight-androidx-driver:0.5.0-alpha.6")
+  implementation("com.eygraber:sqldelight-androidx-driver:0.5.0-alpha.7")
 }
 
 // Multiplatform
 commonMain.dependencies {
-  implementation("com.eygraber:sqldelight-androidx-driver:0.5.0-alpha.6")
+  implementation("com.eygraber:sqldelight-androidx-driver:0.5.0-alpha.7")
 }
 ```
 
@@ -150,7 +150,7 @@ Add the `:opfs-driver` dependency to your web source set:
 ```kotlin
 val webMain by getting {
   dependencies {
-    implementation("com.eygraber:sqldelight-androidx-driver-opfs:0.5.0-alpha.6")
+    implementation("com.eygraber:sqldelight-androidx-driver-opfs:0.5.0-alpha.7")
   }
 }
 ```
@@ -355,7 +355,7 @@ dispatches each query onto its own connection pool, so wrapping every mapper in 
 
 ```kotlin
 dependencies {
-  implementation("com.eygraber:sqldelight-coroutines-extensions:0.5.0-alpha.6")
+  implementation("com.eygraber:sqldelight-coroutines-extensions:0.5.0-alpha.7")
 }
 ```
 
