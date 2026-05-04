@@ -50,8 +50,17 @@ Next configure the database.
 > [!IMPORTANT]
 > `generateAsync` must equal `true` since `AndroidxSqliteDriver` is a suspending driver.
 
+> [!IMPORTANT]
+> If you're producing a **dynamic framework** for a Kotlin/Native target (typically iOS) and using
+> `BundledSQLiteDriver()`, set `linkSqlite = false`. SQLDelight defaults to passing `-lsqlite3` to
+> the linker so the framework links against the system SQLite, but `androidx.sqlite:sqlite-bundled`
+> already statically bundles its own SQLite — leaving `linkSqlite = true` makes `lld` fail with
+> `library not found for -lsqlite3`.
+
 ```kotlin
 sqldelight {
+  linkSqlite = false
+
   databases {
     register("Database") {
       generateAsync = true
