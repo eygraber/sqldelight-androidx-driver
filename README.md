@@ -32,12 +32,12 @@ repositories {
 
 // Android/JVM
 dependencies {
-  implementation("com.eygraber:sqldelight-androidx-driver:0.1.1")
+  implementation("com.eygraber:sqldelight-androidx-driver:0.2.0")
 }
 
 // Multiplatform
 commonMain.dependencies {
-  implementation("com.eygraber:sqldelight-androidx-driver:0.1.1")
+  implementation("com.eygraber:sqldelight-androidx-driver:0.2.0")
 }
 ```
 
@@ -266,7 +266,7 @@ dispatches each query onto its own connection pool, so wrapping every mapper in 
 
 ```kotlin
 dependencies {
-  implementation("com.eygraber:sqldelight-coroutines-extensions:0.1.1")
+  implementation("com.eygraber:sqldelight-coroutines-extensions:0.2.0")
 }
 ```
 
