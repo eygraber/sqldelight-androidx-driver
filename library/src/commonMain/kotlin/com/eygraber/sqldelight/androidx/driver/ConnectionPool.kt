@@ -7,6 +7,7 @@ import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteConcurrencyModel.Mu
 import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteConcurrencyModel.SingleReaderWriter
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -132,6 +133,36 @@ internal class AndroidxDriverConnectionPool(
   }
 
   /**
+   * Tries to acquire the writer within [timeoutMs], returning it or null on timeout.
+   *
+   * Uses non-suspending tryLock() polling rather than a suspending lock() wrapped in
+   * withTimeoutOrNull. A suspending acquire can complete (lock held) at the same instant the
+   * timeout fires, and withTimeoutOrNull's prompt cancellation would then discard the result while
+   * the lock stays held — leaking the writer forever. With tryLock() there is no window where the
+   * lock is acquired but the connection is thrown away.
+   */
+  private suspend fun tryAcquireWriterConnection(timeoutMs: Long = 50): SQLiteConnection? {
+    var locked = false
+    var handedOff = false
+    try {
+      withTimeoutOrNull(timeoutMs) {
+        while(!writerMutex.tryLock()) delay(1)
+        locked = true
+      }
+      if(!locked) return null
+      val connection = writerConnection
+      handedOff = true
+      return connection
+    }
+    finally {
+      // If the lock was taken but we're leaving without handing the connection to the caller —
+      // cancellation after tryLock() succeeded, or the lazy writerConnection initializer throwing —
+      // release it so the writer isn't leaked.
+      if(locked && !handedOff) writerMutex.unlock()
+    }
+  }
+
+  /**
    * Acquires a reader connection, suspending if none are available.
    * @return A reader SQLiteConnection
    */
@@ -141,9 +172,7 @@ internal class AndroidxDriverConnectionPool(
       // acquire() returns null when capacity dropped to 0 mid-wait (e.g. WAL → non-WAL swap).
       // Loop so we re-check concurrencyModel and route to the writer.
       val reader = readerPool.acquire(
-        onEmpty = {
-          withTimeoutOrNull(50) { acquireWriterConnection() }
-        },
+        onEmpty = { tryAcquireWriterConnection() },
       )
       if(reader != null) return reader
     }
