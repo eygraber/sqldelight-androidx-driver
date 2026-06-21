@@ -25,7 +25,7 @@ ktlintCustomRules = "0.1.1"
 
 okio = "3.17.0"
 
-publish = "0.36.0"
+publish = "0.37.0"
 
 [plugins]
 conventions = { id = "com.eygraber.conventions", version.ref = "conventions" }
