@@ -10,6 +10,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -277,6 +278,115 @@ class AndroidxDriverConnectionPoolTest {
     assertFailsWith<IllegalStateException> {
       pool.acquireWriterConnection()
     }
+  }
+
+  @Test
+  fun `reader fallback acquires the writer when the pool is empty and the writer is free`() = runTest {
+    val pool = AndroidxDriverConnectionPool(
+      connectionFactory = TestConnectionFactory(),
+      nameProvider = { "test.db" },
+      isFileBased = true,
+      configuration = AndroidxSqliteConfiguration(
+        concurrencyModel = MultipleReadersSingleWriter(isWal = true, walCount = 1),
+      ),
+    )
+
+    // Materialize the writer so we can compare identity, then free it.
+    val writer = pool.acquireWriterConnection()
+    pool.releaseWriterConnection()
+
+    // Drain the single reader so the pool is empty.
+    val reader = pool.acquireReaderConnection()
+
+    // With the pool empty and the writer free, the fallback hands out the writer as a reader.
+    val fallback = pool.acquireReaderConnection()
+    assertSame(writer, fallback, "Empty reader pool should fall back to the free writer")
+
+    pool.releaseReaderConnection(fallback)
+    pool.releaseReaderConnection(reader)
+    pool.close()
+  }
+
+  @Test
+  fun `reader fallback parks and recovers without leaking the writer when the writer is held`() = runTest {
+    val pool = AndroidxDriverConnectionPool(
+      connectionFactory = TestConnectionFactory(),
+      nameProvider = { "test.db" },
+      isFileBased = true,
+      configuration = AndroidxSqliteConfiguration(
+        concurrencyModel = MultipleReadersSingleWriter(isWal = true, walCount = 1),
+      ),
+    )
+
+    // Drain the single reader and hold the writer, so acquireReaderConnection's fallback times out
+    // instead of handing out the writer, and the acquire parks waiting for a reader to be released.
+    val reader = pool.acquireReaderConnection()
+    pool.acquireWriterConnection()
+
+    var acquired = false
+    var fallbackReader: SQLiteConnection? = null
+    val job = launch {
+      fallbackReader = pool.acquireReaderConnection()
+      acquired = true
+    }
+
+    // Let the fallback time out and park.
+    delay(300)
+    assertFalse(acquired, "Reader should stay parked while the pool is empty and the writer is held")
+
+    // Releasing the reader wakes the parked acquire.
+    pool.releaseReaderConnection(reader)
+    job.join()
+
+    assertTrue(acquired, "Parked reader should resume once a reader is released")
+    assertSame(reader, fallbackReader, "Released reader should be handed to the parked acquire")
+
+    // The fallback never took the writer, so a single release fully unlocks it; if a timed-out
+    // fallback had leaked the lock this re-acquire would suspend forever.
+    pool.releaseWriterConnection()
+    pool.acquireWriterConnection()
+    pool.releaseWriterConnection()
+
+    pool.releaseReaderConnection(fallbackReader!!)
+    pool.close()
+  }
+
+  @Test
+  fun `reader released to a cancelled acquire returns to the pool instead of being lost`() = runTest {
+    val pool = AndroidxDriverConnectionPool(
+      connectionFactory = TestConnectionFactory(),
+      nameProvider = { "test.db" },
+      isFileBased = true,
+      configuration = AndroidxSqliteConfiguration(
+        concurrencyModel = MultipleReadersSingleWriter(isWal = true, walCount = 1),
+      ),
+    )
+
+    // Drain the single reader and hold the writer so the acquire below parks on the channel.
+    val reader = pool.acquireReaderConnection()
+    pool.acquireWriterConnection()
+
+    val job = launch {
+      pool.acquireReaderConnection()
+    }
+
+    // Let the fallback time out and the acquire park on the reader channel.
+    delay(300)
+
+    // Release the reader — the send hands the entry straight to the parked acquire — then cancel
+    // the acquire before its resumption runs. Prompt cancellation discards the resumption, so
+    // without onUndeliveredElement the entry would be lost and the pool permanently shrunk.
+    pool.releaseReaderConnection(reader)
+    job.cancel()
+    job.join()
+
+    // The reader must still be acquirable; if the entry was lost this would time out.
+    val reacquired = withTimeoutOrNull(5_000) { pool.acquireReaderConnection() }
+    assertSame(reader, reacquired, "Reader handed to a cancelled acquire should return to the pool")
+
+    pool.releaseReaderConnection(reacquired!!)
+    pool.releaseWriterConnection()
+    pool.close()
   }
 
   private class TestConnectionFactory : AndroidxSqliteConnectionFactory {

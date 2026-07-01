@@ -108,11 +108,34 @@ internal class AndroidxSqliteExecutingDriver(
       ).also {
         activeTransaction = it
       }
-      // Past this point the Transaction owns the writer release via endTransaction.
+      // BEGIN IMMEDIATE has now run. The Transaction's endTransaction releases the writer, but it
+      // only runs once block() starts (SqlDelight invokes it from block's finally). If cancellation
+      // fires at the withContext boundary before block() runs, endTransaction never executes, so we
+      // must roll back the open transaction and release the writer here. onTransactionStarted()
+      // tells the dispatch() call site to stop owning the release; blockStarted tracks whether that
+      // ownership has reached block() yet.
       onTransactionStarted()
 
-      withContext(dispatcher + TransactionElement(transaction = transaction)) {
-        block()
+      var blockStarted = false
+      try {
+        withContext(dispatcher + TransactionElement(transaction = transaction)) {
+          blockStarted = true
+          block()
+        }
+      }
+      finally {
+        // blockStarted only stays false if withContext threw before running block() — i.e.
+        // cancellation at the dispatch boundary, so this never runs on a normal return.
+        if(!blockStarted) {
+          withContext(NonCancellable) {
+            try {
+              writeConnection.execSQL("ROLLBACK")
+            }
+            catch(_: Throwable) {}
+            activeTransaction = null
+            connectionPool.releaseWriterConnection()
+          }
+        }
       }
     }
   }

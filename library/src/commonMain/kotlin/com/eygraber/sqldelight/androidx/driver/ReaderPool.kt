@@ -27,7 +27,27 @@ internal class ReaderPool(
     val connection: Lazy<SQLiteConnection>,
   )
 
-  private val channel = Channel<ReaderEntry>(capacity = Channel.UNLIMITED)
+  // onUndeliveredElement: a receiver cancelled at the same instant a send resumes it (prompt
+  // cancellation) never sees the entry; without this handler the entry would be lost and the pool
+  // would permanently shrink, eventually hanging withSwap's drain and close(). Re-send it —
+  // trySend on an UNLIMITED channel only fails if the pool was closed, in which case the
+  // connection just needs to be closed like drainAndClose would have.
+  private val channel: Channel<ReaderEntry> = Channel(
+    capacity = Channel.UNLIMITED,
+    onUndeliveredElement = { entry ->
+      if(channel.trySend(entry).isFailure && entry.isCreated) {
+        val connection = entry.connection.value
+        try {
+          connection.close()
+        }
+        catch(_: Throwable) {}
+        try {
+          onConnectionClosed(connection)
+        }
+        catch(_: Throwable) {}
+      }
+    },
+  )
 
   private val swapMutex = Mutex()
 
