@@ -7,6 +7,7 @@ import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteConcurrencyModel.Mu
 import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteConcurrencyModel.SingleReaderWriter
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -26,17 +27,15 @@ internal interface ConnectionPool : AutoCloseable {
   ): R
 }
 
-internal suspend inline fun <R> ConnectionPool.withWriterConnection(
-  block: SQLiteConnection.() -> R,
-): R {
+internal suspend fun <R> ConnectionPool.withWriterConnection(
+  block: suspend SQLiteConnection.() -> R,
+): R = withContext(NonCancellable) {
   val connection = acquireWriterConnection()
   try {
-    return connection.block()
+    connection.block()
   }
   finally {
-    withContext(NonCancellable) {
-      releaseWriterConnection()
-    }
+    releaseWriterConnection()
   }
 }
 
@@ -132,6 +131,26 @@ internal class AndroidxDriverConnectionPool(
   }
 
   /**
+   * Tries to acquire the writer connection within [timeoutMs], returning it or null on timeout.
+   *
+   * Uses tryLock() polling rather than lock() so the timeout is not defeated by NonCancellable,
+   * and because tryLock() is non-suspending there is no cancellation window while the lock is held.
+   */
+  private suspend fun tryAcquireWriterConnection(timeoutMs: Long = 50): SQLiteConnection? {
+    var locked = false
+    return try {
+      withTimeoutOrNull(timeoutMs) {
+        while(!writerMutex.tryLock()) delay(1)
+        locked = true
+      }
+      if(locked) writerConnection else null
+    } catch(t: Throwable) {
+      if(locked) writerMutex.unlock()
+      throw t
+    }
+  }
+
+  /**
    * Acquires a reader connection, suspending if none are available.
    * @return A reader SQLiteConnection
    */
@@ -140,11 +159,7 @@ internal class AndroidxDriverConnectionPool(
       if(concurrencyModel.readerCount == 0) return acquireWriterConnection()
       // acquire() returns null when capacity dropped to 0 mid-wait (e.g. WAL → non-WAL swap).
       // Loop so we re-check concurrencyModel and route to the writer.
-      val reader = readerPool.acquire(
-        onEmpty = {
-          withTimeoutOrNull(50) { acquireWriterConnection() }
-        },
-      )
+      val reader = readerPool.acquire(onEmpty = { tryAcquireWriterConnection() })
       if(reader != null) return reader
     }
   }
@@ -172,48 +187,51 @@ internal class AndroidxDriverConnectionPool(
   ): R = readerPool.withSwap(
     newCapacityAfter = { concurrencyModel.readerCount },
   ) {
-    val writer = acquireWriterConnection()
-    val previousConcurrencyModel = concurrencyModel as? MultipleReadersSingleWriter
-    var isConcurrencyModelReplaced = false
+    val outerContext = currentCoroutineContext()
+    // Wrap acquire/release in NonCancellable to prevent CancellationException from deadlocking the mutex.
+    // outerContext is restored for executeStatement so the caller's cancellation remains in effect.
+    withContext(NonCancellable) {
+      val writer = acquireWriterConnection()
+      val previousConcurrencyModel = concurrencyModel as? MultipleReadersSingleWriter
+      var isConcurrencyModelReplaced = false
 
-    try {
-      val isForeignKeyConstraintsEnabled =
-        writer.prepare("PRAGMA foreign_keys;").use { statement ->
-          statement.step()
-          statement.getBoolean(0)
+      try {
+        val isForeignKeyConstraintsEnabled =
+          writer.prepare("PRAGMA foreign_keys;").use { statement ->
+            statement.step()
+            statement.getBoolean(0)
+          }
+
+        val queryResult = withContext(outerContext) { executeStatement(writer) }
+
+        // PRAGMA journal_mode currently wipes out foreign_keys - https://issuetracker.google.com/issues/447613208
+        val foreignKeys = if(isForeignKeyConstraintsEnabled) "ON" else "OFF"
+        writer.execSQL("PRAGMA foreign_keys = $foreignKeys;")
+
+        if(previousConcurrencyModel != null) {
+          val result = when(queryResult) {
+            null -> null
+            is String -> queryResult
+            else -> error(
+              """
+              PRAGMA journal_mode is intercepted by AndroidxSqliteDriver to keep its connection pool
+              in sync with the database's journal mode, which requires the query result to be a String.
+              Got ${queryResult::class.simpleName ?: "<type unknown>"} instead. Either remove the custom
+              column adapter from this query, or set the journal mode via
+              AndroidxSqliteConfigurableDriver.setJournalMode in onConfigure.
+              """.trimIndent(),
+            )
+          }
+          val isWal = result.equals("wal", ignoreCase = true)
+          if(isWal != previousConcurrencyModel.isWal) {
+            concurrencyModel = previousConcurrencyModel.copy(isWal = isWal)
+            isConcurrencyModelReplaced = true
+          }
         }
 
-      val queryResult = executeStatement(writer)
-
-      // PRAGMA journal_mode currently wipes out foreign_keys - https://issuetracker.google.com/issues/447613208
-      val foreignKeys = if(isForeignKeyConstraintsEnabled) "ON" else "OFF"
-      writer.execSQL("PRAGMA foreign_keys = $foreignKeys;")
-
-      if(previousConcurrencyModel != null) {
-        val result = when(queryResult) {
-          null -> null
-          is String -> queryResult
-          else -> error(
-            """
-            PRAGMA journal_mode is intercepted by AndroidxSqliteDriver to keep its connection pool
-            in sync with the database's journal mode, which requires the query result to be a String.
-            Got ${queryResult::class.simpleName ?: "<type unknown>"} instead. Either remove the custom
-            column adapter from this query, or set the journal mode via
-            AndroidxSqliteConfigurableDriver.setJournalMode in onConfigure.
-            """.trimIndent(),
-          )
-        }
-        val isWal = result.equals("wal", ignoreCase = true)
-        if(isWal != previousConcurrencyModel.isWal) {
-          concurrencyModel = previousConcurrencyModel.copy(isWal = isWal)
-          isConcurrencyModelReplaced = true
-        }
+        queryResult
       }
-
-      queryResult
-    }
-    finally {
-      withContext(NonCancellable) {
+      finally {
         releaseWriterConnection()
         if(isConcurrencyModelReplaced) {
           try {
