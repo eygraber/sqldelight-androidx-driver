@@ -47,6 +47,12 @@ public enum class OpfsMultiTabMode {
    * Trade-offs: queries from non-owner tabs incur a cross-tab message round-trip, and in-flight
    * transactions on the owner tab are not preserved if it closes mid-transaction (the new owner
    * starts with fresh connections).
+   *
+   * Ownership transfer is at-least-once: requests that never received a response from the old
+   * owner are retried against the new one. If the old owner executed a write but closed before
+   * responding, the retry executes that write a second time. Statements whose duplicate
+   * execution matters should be written idempotently (e.g. `INSERT OR IGNORE`, explicit
+   * primary keys, or upserts).
    */
   Shared,
 
