@@ -6,6 +6,8 @@ import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlCursor
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.db.SqlSchema
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlin.random.Random
 import kotlin.random.nextULong
@@ -117,6 +119,54 @@ class AndroidxSqliteWebDriverTest {
       assertEquals("persist", value)
       close()
     }
+  }
+
+  // Regression test for https://github.com/eygraber/sqldelight-androidx-driver/issues/195 —
+  // every web statement suspends across a worker round trip, so concurrent transactions
+  // interleave; without the WebConnectionPool mutex both issue BEGIN on the single connection
+  // ("cannot start a transaction within a transaction").
+  @Test
+  fun concurrentTransactionsDoNotInterleave() = runTest {
+    val driver = AndroidxSqliteDriver(
+      driver = webTestSqliteDriver(),
+      databaseType = AndroidxSqliteDatabaseType.Memory,
+      schema = schema,
+    )
+
+    val transacter = object : SuspendingTransacterImpl(driver) {}
+
+    val inserts = 10
+    coroutineScope {
+      repeat(inserts) { i ->
+        launch {
+          transacter.transaction {
+            driver.execute(null, "INSERT INTO test VALUES ($i, 'committed')", 0).await()
+          }
+        }
+        launch {
+          transacter.transaction {
+            driver.execute(null, "INSERT INTO test VALUES (${i + 1000}, 'rolled-back')", 0).await()
+            rollback()
+          }
+        }
+      }
+    }
+
+    val committedAndTotal = driver.executeQuery(
+      identifier = null,
+      sql = "SELECT COUNT(CASE WHEN value = 'committed' THEN 1 END), COUNT(*) FROM test",
+      mapper = { cursor ->
+        QueryResult.AsyncValue {
+          cursor.next().await()
+          requireNotNull(cursor.getLong(0)) to requireNotNull(cursor.getLong(1))
+        }
+      },
+      parameters = 0,
+    ).await()
+
+    assertEquals(inserts.toLong() to inserts.toLong(), committedAndTotal)
+
+    driver.close()
   }
 
   @Test

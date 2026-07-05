@@ -15,6 +15,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
@@ -347,7 +348,7 @@ class AndroidxDriverConnectionPoolTest {
     pool.acquireWriterConnection()
     pool.releaseWriterConnection()
 
-    pool.releaseReaderConnection(fallbackReader!!)
+    pool.releaseReaderConnection(assertNotNull(fallbackReader))
     pool.close()
   }
 
@@ -384,7 +385,7 @@ class AndroidxDriverConnectionPoolTest {
     val reacquired = withTimeoutOrNull(5_000) { pool.acquireReaderConnection() }
     assertSame(reader, reacquired, "Reader handed to a cancelled acquire should return to the pool")
 
-    pool.releaseReaderConnection(reacquired!!)
+    pool.releaseReaderConnection(assertNotNull(reacquired))
     pool.releaseWriterConnection()
     pool.close()
   }
