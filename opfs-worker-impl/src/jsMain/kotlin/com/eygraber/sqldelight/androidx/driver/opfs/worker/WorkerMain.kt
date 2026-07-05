@@ -41,11 +41,43 @@ private fun routeDriverMessage(e: MessageEventLike) {
     forwardToLeader(requestMsg.id, requestMsg.data)
     return
   }
-  if(isPaused) {
+  if(pauseState != PauseState.Live) {
     pausedQueue.add(e)
     return
   }
   dispatchLocal(requestMsg.id, requestMsg.data)
+}
+
+// The resume chain finished claiming handles. If a pause arrived mid-chain, release them
+// again and only now ack — the orchestrator holds the Web Lock until the ack arrives.
+private fun onResumeSettled() {
+  if(pendingPause) {
+    pendingPause = false
+    pauseState = PauseState.Paused
+    suspendLocalInstances()
+    try {
+      poolPauseVfs(poolUtil)
+    }
+    catch(err: Throwable) {
+      consoleErrorWith("sqldelight-androidx-opfs-worker: pauseVfs failed", err)
+    }
+    controlPort?.let(::controlPortAck)
+    return
+  }
+  pauseState = PauseState.Live
+  while(pausedQueue.isNotEmpty()) {
+    routeDriverMessage(pausedQueue.removeAt(0))
+  }
+}
+
+// The resume chain failed, so no handles are held. Stay paused; if a pause arrived mid-chain,
+// ack it now so the orchestrator can release the Web Lock.
+private fun onResumeFailed() {
+  pauseState = PauseState.Paused
+  if(pendingPause) {
+    pendingPause = false
+    controlPort?.let(::controlPortAck)
+  }
 }
 
 private fun onMessage(e: MessageEventLike) {
@@ -61,7 +93,7 @@ private fun onMessage(e: MessageEventLike) {
       }
       "PauseOnHidden" -> {
         // Don't claim SAH handles until the main thread tells us we have the foreground lock.
-        isPaused = true
+        pauseState = PauseState.Paused
         return
       }
       else -> {
@@ -80,8 +112,16 @@ private fun onMessage(e: MessageEventLike) {
     return
   }
   if(isObject(data) && isObject(data.__opfsPause)) {
-    if(multiTabMode == "PauseOnHidden" && !isPaused) {
-      isPaused = true
+    if(multiTabMode == "PauseOnHidden" && pauseState == PauseState.Resuming) {
+      // The resume chain is mid-flight and will claim SAH handles when it settles. Defer the
+      // pause work AND the ack until then — the orchestrator releases the Web Lock on ack, and
+      // releasing it before our handles are actually released would let another tab claim the
+      // pool while we're claiming it too.
+      pendingPause = true
+      return
+    }
+    if(multiTabMode == "PauseOnHidden" && pauseState == PauseState.Live) {
+      pauseState = PauseState.Paused
       if(poolUtil != null) {
         suspendLocalInstances()
         try {
@@ -96,27 +136,24 @@ private fun onMessage(e: MessageEventLike) {
     return
   }
   if(isObject(data) && isObject(data.__opfsResume)) {
-    if(multiTabMode == "PauseOnHidden" && isPaused) {
-      val drain: () -> Unit = {
-        isPaused = false
-        while(pausedQueue.isNotEmpty()) {
-          routeDriverMessage(pausedQueue.removeAt(0))
-        }
-      }
+    if(multiTabMode == "PauseOnHidden" && pauseState == PauseState.Paused) {
+      pauseState = PauseState.Resuming
       if(poolUtil == null) {
         ensureLocalSqlite(
-          onDone = drain,
+          onDone = ::onResumeSettled,
           onError = { err ->
             consoleErrorWith("sqldelight-androidx-opfs-worker: failed to initialize sqlite3", err)
+            onResumeFailed()
           },
         )
       }
       else {
         thenAccept(
           unpauseVfs(poolUtil),
-          { drain() },
+          { onResumeSettled() },
           { err ->
             consoleErrorWith("sqldelight-androidx-opfs-worker: unpauseVfs failed", err)
+            onResumeFailed()
           },
         )
       }
@@ -128,7 +165,7 @@ private fun onMessage(e: MessageEventLike) {
     return
   }
   if(multiTabMode == "PauseOnHidden") {
-    if(isPaused) pausedQueue.add(e) else routeDriverMessage(e)
+    if(pauseState != PauseState.Live) pausedQueue.add(e) else routeDriverMessage(e)
     return
   }
   if(sqlite3 == null) {
