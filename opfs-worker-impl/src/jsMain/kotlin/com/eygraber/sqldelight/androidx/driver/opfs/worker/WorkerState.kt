@@ -31,7 +31,17 @@ internal val followerStates = mutableMapOf<String, dynamic>()
 internal val queuedDriverMessages = mutableListOf<MessageEventLike>()
 internal var acceptingDriverMessages = false
 
-internal var isPaused = false
+// PauseOnHidden lifecycle. Resuming is a real state, not a detail: the resume chain
+// (sqlite init / unpauseVfs) is asynchronous, and both pause and resume messages that arrive
+// mid-chain need to be handled against it, not against Paused/Live.
+internal enum class PauseState { Live, Resuming, Paused }
+
+internal var pauseState = PauseState.Live
+
+// A __opfsPause arrived while the resume chain was in flight. The pause work and its ack are
+// deferred until the chain settles — see onResumeSettled/onResumeFailed in WorkerMain.
+internal var pendingPause = false
+
 internal val pausedQueue = mutableListOf<MessageEventLike>()
 
 // Shared connections live until the worker terminates; followers may still reference them.
