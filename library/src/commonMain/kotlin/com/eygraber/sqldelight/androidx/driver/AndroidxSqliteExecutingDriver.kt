@@ -14,6 +14,7 @@ import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.db.SqlPreparedStatement
 import kotlinx.atomicfu.locks.ReentrantLock
 import kotlinx.atomicfu.locks.withLock
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
@@ -124,9 +125,14 @@ internal class AndroidxSqliteExecutingDriver(
           try {
             writeConnection.executeSQL("ROLLBACK")
           }
+          catch(c: CancellationException) {
+            throw c
+          }
           catch(_: Throwable) {}
-          activeTransaction = null
-          connectionPool.releaseWriterConnection()
+          finally {
+            activeTransaction = null
+            connectionPool.releaseWriterConnection()
+          }
         }
       }
     }
