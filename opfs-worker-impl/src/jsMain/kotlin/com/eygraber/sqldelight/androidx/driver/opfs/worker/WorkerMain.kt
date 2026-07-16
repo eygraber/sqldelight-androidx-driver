@@ -11,6 +11,22 @@ internal fun drainQueuedDriverMessages() {
   }
 }
 
+// sqlite3 initialization failed for good — answer every queued request with the real error
+// so the driver's pending calls reject instead of hanging forever.
+private fun failQueuedDriverMessages(err: dynamic) {
+  while(queuedDriverMessages.isNotEmpty()) {
+    val e = queuedDriverMessages.removeAt(0)
+    replyInitError(e, err)
+  }
+}
+
+private fun replyInitError(e: MessageEventLike, err: dynamic) {
+  val requestMsg: dynamic = e.data
+  val id: dynamic = if(isObject(requestMsg)) requestMsg.id else null
+  val message: dynamic = if(err != null) err.message else null
+  replyError(id, "sqlite3 initialization failed: " + (message ?: err))
+}
+
 private fun routeDriverMessage(e: MessageEventLike) {
   val requestMsg: dynamic = e.data
   if(!isObject(requestMsg) || !isObject(requestMsg.data)) {
@@ -101,6 +117,8 @@ private fun onMessage(e: MessageEventLike) {
           onDone = { drainQueuedDriverMessages() },
           onError = { err ->
             consoleErrorWith("sqldelight-androidx-opfs-worker: failed to initialize sqlite3", err)
+            localSqliteInitError = err
+            failQueuedDriverMessages(err)
           },
         )
         return
@@ -169,7 +187,8 @@ private fun onMessage(e: MessageEventLike) {
     return
   }
   if(sqlite3 == null) {
-    queuedDriverMessages.add(e)
+    val err = localSqliteInitError
+    if(err != null) replyInitError(e, err) else queuedDriverMessages.add(e)
   }
   else {
     routeDriverMessage(e)
