@@ -15,25 +15,52 @@ internal fun ensureLocalSqlite(onDone: () -> Unit, onError: (dynamic) -> Unit) {
   if(localSqliteInitInFlight) return
   localSqliteInitInFlight = true
   if(sqlite3 == null) {
-    val sqlite3Url: String = initData.sqlite3Url.unsafeCast<String>()
-    val wasmUrl: String = initData.wasmUrl.unsafeCast<String>()
-    thenAccept(
-      dynamicImport(sqlite3Url),
-      { mod ->
-        thenAccept(
-          installSqlite3(mod, wasmUrl),
-          { factory ->
-            sqlite3 = factory
-            installPool(0, ::finishLocalSqliteInitSuccess, ::finishLocalSqliteInitFailure)
-          },
-          ::finishLocalSqliteInitFailure,
-        )
-      },
-      ::finishLocalSqliteInitFailure,
+    importAndInstallSqlite3(
+      attempt = 0,
+      onDone = { installPool(0, ::finishLocalSqliteInitSuccess, ::finishLocalSqliteInitFailure) },
+      onError = ::finishLocalSqliteInitFailure,
     )
   }
   else {
     installPool(0, ::finishLocalSqliteInitSuccess, ::finishLocalSqliteInitFailure)
+  }
+}
+
+// An import/install failure at boot is usually transient — the tab went offline or a mobile
+// browser killed the in-flight download when it was backgrounded — so retry with backoff
+// before giving up; connectivity returning makes a later attempt win. Without this, a single
+// interrupted download leaves sqlite3 null forever and the driver's requests hang.
+private fun importAndInstallSqlite3(attempt: Int, onDone: () -> Unit, onError: (dynamic) -> Unit) {
+  val sqlite3Url: String = initData.sqlite3Url.unsafeCast<String>()
+  val wasmUrl: String = initData.wasmUrl.unsafeCast<String>()
+  // Retries append a fragment: some browsers cache a *failed* dynamic import in the module
+  // map, so re-importing the identical URL keeps failing even after connectivity returns. A
+  // fragment gives the retry a fresh module key without changing the network request (so a
+  // successful fetch still hits the HTTP cache).
+  val url = if(attempt == 0) sqlite3Url else "$sqlite3Url#retry$attempt"
+  thenAccept(
+    dynamicImport(url),
+    { mod ->
+      thenAccept(
+        installSqlite3(mod, wasmUrl),
+        { factory ->
+          sqlite3 = factory
+          onDone()
+        },
+        { err -> retryImportOrFail(attempt, err, onDone, onError) },
+      )
+    },
+    { err -> retryImportOrFail(attempt, err, onDone, onError) },
+  )
+}
+
+private fun retryImportOrFail(attempt: Int, err: dynamic, onDone: () -> Unit, onError: (dynamic) -> Unit) {
+  if(attempt >= 5) {
+    onError(err)
+  }
+  else {
+    // 250ms, 500ms, 1s, 2s, 4s
+    setTimeout(250 shl attempt) { importAndInstallSqlite3(attempt + 1, onDone, onError) }
   }
 }
 

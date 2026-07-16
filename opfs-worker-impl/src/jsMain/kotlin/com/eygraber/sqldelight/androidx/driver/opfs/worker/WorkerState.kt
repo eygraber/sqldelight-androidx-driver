@@ -31,6 +31,10 @@ internal val followerStates = mutableMapOf<String, dynamic>()
 internal val queuedDriverMessages = mutableListOf<MessageEventLike>()
 internal var acceptingDriverMessages = false
 
+// Single mode: set when sqlite3 initialization has failed for good (retries exhausted).
+// Requests are answered with this error instead of queueing forever — see onMessage.
+internal var localSqliteInitError: dynamic = null
+
 // PauseOnHidden lifecycle. Resuming is a real state, not a detail: the resume chain
 // (sqlite init / unpauseVfs) is asynchronous, and both pause and resume messages that arrive
 // mid-chain need to be handled against it, not against Paused/Live.
