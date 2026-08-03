@@ -1,13 +1,16 @@
 package com.eygraber.sqldelight.androidx.driver
 
 import androidx.sqlite.SQLiteConnection
+import app.cash.sqldelight.Query
 import app.cash.sqldelight.SuspendingTransacterImpl
 import app.cash.sqldelight.db.AfterVersion
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.db.SqlSchema
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.newSingleThreadContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.test.runTest
@@ -19,6 +22,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFails
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -363,6 +367,60 @@ abstract class AndroidxSqliteTransacterTest {
       scope = { transactionWithResult(false, it) },
       block = { rollback(Unit) },
     )
+  }
+
+  @Test
+  fun `currentTransaction is not visible to threads other than the transaction thread`() = runTest {
+    val transactionActive = CompletableDeferred<Unit>()
+    val isTransactionVisibleElsewhere = CompletableDeferred<Boolean>()
+
+    val observer = launch(IoDispatcher) {
+      transactionActive.await()
+      isTransactionVisibleElsewhere.complete(driver.currentTransaction() != null)
+    }
+
+    transacter.transaction {
+      assertNotNull(driver.currentTransaction())
+      transactionActive.complete(Unit)
+      assertFalse(
+        isTransactionVisibleElsewhere.await(),
+        "A thread that isn't running the transaction must not see it",
+      )
+      assertNotNull(driver.currentTransaction())
+    }
+
+    observer.join()
+    assertNull(driver.currentTransaction())
+  }
+
+  @Test
+  fun `a write from another coroutine during a transaction notifies its listeners immediately`() = runTest {
+    val transactionActive = CompletableDeferred<Unit>()
+    val notified = CompletableDeferred<Unit>()
+
+    val notifyingTransacter = object : SuspendingTransacterImpl(driver) {
+      fun notifyTestQueries() = notifyQueries(identifier = 1) { emit -> emit("test") }
+    }
+
+    driver.addListener(
+      "test",
+      listener = Query.Listener { notified.complete(Unit) },
+    )
+
+    val notifier = launch(IoDispatcher) {
+      transactionActive.await()
+      notifyingTransacter.notifyTestQueries()
+    }
+
+    transacter.transaction {
+      transactionActive.complete(Unit)
+      // If the notifying coroutine were to see this transaction as its own, the notification
+      // would be buffered into this transaction's pendingTables instead of firing, and this
+      // await would never complete.
+      notified.await()
+    }
+
+    notifier.join()
   }
 }
 
