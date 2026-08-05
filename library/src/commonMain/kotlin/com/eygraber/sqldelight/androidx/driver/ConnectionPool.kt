@@ -281,7 +281,7 @@ internal class AndroidxDriverConnectionPool(
 }
 
 internal class PassthroughConnectionPool(
-  private val connectionFactory: AndroidxSqliteConnectionFactory,
+  connectionFactory: AndroidxSqliteConnectionFactory,
   nameProvider: () -> String,
   private val configuration: AndroidxSqliteConfiguration,
 ) : ConnectionPool {
