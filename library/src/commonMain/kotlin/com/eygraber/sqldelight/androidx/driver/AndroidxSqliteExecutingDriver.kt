@@ -32,6 +32,11 @@ internal data class TransactionElement(
   companion object Key : CoroutineContext.Key<TransactionElement>
 }
 
+private class ActiveTransaction(
+  val ownerThreadId: Long,
+  val transaction: Transacter.Transaction,
+)
+
 internal class AndroidxSqliteExecutingDriver(
   private val connectionPool: ConnectionPool,
   private val isStatementCacheSkipped: Boolean,
@@ -40,7 +45,7 @@ internal class AndroidxSqliteExecutingDriver(
   private val statementCacheSize: Int,
 ) : SqlDriver, SuspendingTransacter.TransactionDispatcher {
   @Volatile
-  private var activeTransaction: Transacter.Transaction? = null
+  private var activeTransaction: ActiveTransaction? = null
 
   override suspend fun <R> dispatch(transaction: suspend () -> R) =
     when(val enclosing = currentCoroutineContext()[TransactionElement]) {
@@ -105,8 +110,16 @@ internal class AndroidxSqliteExecutingDriver(
       val transaction = Transaction(
         enclosingTransaction = null,
         connection = writeConnection,
-      ).also {
-        activeTransaction = it
+      ).also { newTransaction ->
+        // The transaction (and everything SqlDelight does with it, including reading its
+        // pendingTables during postTransactionCleanup) is confined to this thread for its entire
+        // lifetime. Recording the owner thread lets currentTransaction() hide the transaction from
+        // other threads — SqlDelight's notifyQueries would otherwise mutate the transaction's
+        // unsynchronized pendingTables from a concurrent coroutine while cleanup reads it.
+        activeTransaction = ActiveTransaction(
+          ownerThreadId = currentThreadId(),
+          transaction = newTransaction,
+        )
       }
       // BEGIN IMMEDIATE has now run. The Transaction's endTransaction releases the writer, but it
       // only runs once block() starts (SqlDelight invokes it from block's finally). If cancellation
@@ -149,7 +162,8 @@ internal class AndroidxSqliteExecutingDriver(
       }.transaction
     }
 
-  override fun currentTransaction(): Transacter.Transaction? = activeTransaction
+  override fun currentTransaction(): Transacter.Transaction? =
+    activeTransaction?.takeIf { it.ownerThreadId == currentThreadId() }?.transaction
 
   override fun <R> executeQuery(
     identifier: Int?,
