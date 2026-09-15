@@ -4,6 +4,7 @@ package com.eygraber.sqldelight.androidx.driver.integration
 
 import androidx.sqlite.SQLiteDriver
 import androidx.sqlite.driver.web.WebWorkerSQLiteDriver
+import com.eygraber.sqldelight.androidx.driver.opfs.OpfsLockState
 import com.eygraber.sqldelight.androidx.driver.opfs.OpfsMultiTabMode
 import com.eygraber.sqldelight.androidx.driver.opfs.opfsWorker
 import kotlinx.coroutines.Dispatchers
@@ -16,8 +17,11 @@ import kotlin.js.Promise
 // The wasmJs test runner does not await a suspend after-hook, so the wait for released OPFS handles runs at the start of the next test.
 private val knownTestWorkers = mutableSetOf<Worker>()
 
-internal fun newTestWorker(mode: OpfsMultiTabMode = OpfsMultiTabMode.Single): Worker {
-  val w = opfsWorker(mode)
+internal fun newTestWorker(
+  mode: OpfsMultiTabMode = OpfsMultiTabMode.Single,
+  onLockStateChange: ((OpfsLockState) -> Unit)? = null,
+): Worker {
+  val w = opfsWorker(mode, onLockStateChange)
   knownTestWorkers.add(w)
   return w
 }

@@ -93,10 +93,12 @@ public enum class OpfsMultiTabMode {
  * @param multiTabMode strategy to share the database across multiple tabs of the same origin.
  *   Defaults to [OpfsMultiTabMode.PauseOnHidden], where only the visible tab runs queries and
  *   backgrounded tabs queue theirs. See the enum entries for the trade-offs of each mode.
- * @param onLockStateChange optional callback invoked on the main thread whenever this worker
- *   transitions between [OpfsLockState.Live] and [OpfsLockState.Paused]. Use it to surface a
- *   visible indicator when another tab/window is using the database. Always fires once
- *   synchronously with the initial state during this call.
+ * @param onLockStateChange optional callback invoked on the main thread when this worker
+ *   changes between [OpfsLockState.Live] and [OpfsLockState.Paused]. It fires once
+ *   synchronously with the initial state during this call. In `PauseOnHidden` mode, Live fires
+ *   after the worker confirms it can serve queries, and Paused fires after the worker confirms
+ *   it released the database. Use it to show an indicator when another tab or window uses
+ *   the database.
  */
 public fun opfsWorker(
   multiTabMode: OpfsMultiTabMode = OpfsMultiTabMode.Default,

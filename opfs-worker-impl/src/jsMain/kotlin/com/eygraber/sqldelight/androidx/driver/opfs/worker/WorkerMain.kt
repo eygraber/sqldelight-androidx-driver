@@ -91,19 +91,22 @@ private fun onResumeSettled() {
     return
   }
   pauseState = PauseState.Live
+  controlPort?.let(::controlPortResumedAck)
   while(pausedQueue.isNotEmpty()) {
     routeDriverMessage(pausedQueue.removeAt(0))
   }
 }
 
 // The resume chain failed, so no handles are held. Stay paused; if a pause arrived mid-chain,
-// ack it now so the orchestrator can release the Web Lock.
-private fun onResumeFailed() {
+// ack it now so the orchestrator can release the Web Lock. Otherwise report the failure.
+private fun onResumeFailed(err: dynamic) {
   pauseState = PauseState.Paused
   if(pendingPause) {
     pendingPause = false
     controlPort?.let(::controlPortAck)
+    return
   }
+  controlPort?.let { controlPortResumeFailed(it, errorMessage(err)) }
 }
 
 private fun onMessage(e: MessageEventLike) {
@@ -167,7 +170,7 @@ private fun onMessage(e: MessageEventLike) {
           onDone = ::onResumeSettled,
           onError = { err ->
             consoleErrorWith("sqldelight-androidx-opfs-worker: failed to initialize sqlite3", err)
-            onResumeFailed()
+            onResumeFailed(err)
           },
         )
       }
@@ -177,7 +180,7 @@ private fun onMessage(e: MessageEventLike) {
           { onResumeSettled() },
           { err ->
             consoleErrorWith("sqldelight-androidx-opfs-worker: unpauseVfs failed", err)
-            onResumeFailed()
+            onResumeFailed(err)
           },
         )
       }
