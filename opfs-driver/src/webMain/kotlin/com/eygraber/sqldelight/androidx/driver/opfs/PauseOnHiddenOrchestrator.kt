@@ -13,7 +13,10 @@ package com.eygraber.sqldelight.androidx.driver.opfs
  *    actively trying to own) the lock.
  *  - The Web Lock is not released until the worker has acked `__opfsPause` via the control
  *    port, so the next tab can't try to install the SAH pool while our handles are still open.
- *  - `onLive`/`onPaused` mirror the lock state from the consumer's perspective.
+ *  - `onLive`/`onPaused` follow the worker's acknowledgements. Live fires only after the worker
+ *    acked `__opfsResume`, and Paused fires after the worker acked `__opfsPause`.
+ *  - A failed resume releases the Web Lock and retries the acquisition with a bounded backoff
+ *    while the document is visible.
  */
 internal fun startPauseOnHiddenOrchestration(
   handle: WorkerHandle,
@@ -29,6 +32,8 @@ internal fun startPauseOnHiddenOrchestration(
 
 private const val LOCK_NAME = "sqldelight-androidx-opfs-foreground"
 private const val CONTENTION_CHANNEL_NAME = "sqldelight-androidx-opfs-contention"
+private const val INITIAL_RETRY_DELAY_MS = 250
+private const val MAX_RETRY_DELAY_MS = 5_000
 
 private class PauseOnHiddenOrchestrator(
   private val handle: WorkerHandle,
@@ -45,11 +50,21 @@ private class PauseOnHiddenOrchestrator(
 
   private var lockGeneration = 0
 
+  private var live = false
+
+  private var retryTimer: Int? = null
+  private var retryDelayMs = INITIAL_RETRY_DELAY_MS
+
   // Cross-tab signal channel. Non-focused holders drop the lock when a peer broadcasts wanting.
   private lateinit var contentionBc: BroadcastChannelLike
 
   fun start() {
-    listenForPausedAck(handle.controlPort) { onPausedAck() }
+    listenForControlMessages(
+      controlPort = handle.controlPort,
+      onPausedAck = { onPausedAck() },
+      onResumedAck = { onResumedAck() },
+      onResumeFailed = { message -> onResumeFailed(message) },
+    )
     contentionBc = createContentionBroadcastChannel(CONTENTION_CHANNEL_NAME) { onWanting() }
 
     // (document.hasFocus() can be unreliable in headless browsers, so don't gate the initial
@@ -64,6 +79,7 @@ private class PauseOnHiddenOrchestrator(
 
   private fun requestLock() {
     if(releaser != null) return
+    cancelRetry()
     // Tell other tabs we want the lock — any holder that isn't focused will yield.
     postContentionWanting(contentionBc)
     val generation = ++lockGeneration
@@ -72,7 +88,6 @@ private class PauseOnHiddenOrchestrator(
       onAcquired = {
         if(generation == lockGeneration && releaser != null) {
           postOpfsResume(handle.worker)
-          onLive()
         }
       },
       onFailure = { err ->
@@ -83,8 +98,8 @@ private class PauseOnHiddenOrchestrator(
   }
 
   private fun dropLock() {
+    cancelRetry()
     val r = releaser ?: return
-    onPaused()
     releaser = null
     // Wait for the worker to confirm it has run pauseVfs() and released its SAH handles before
     // releasing the Web Lock — otherwise the next tab can win the lock and try to unpause while
@@ -94,9 +109,53 @@ private class PauseOnHiddenOrchestrator(
   }
 
   private fun onPausedAck() {
+    emitPaused()
     val r = pendingRelease ?: return
     pendingRelease = null
     r.release()
+  }
+
+  private fun onResumedAck() {
+    if(releaser == null || pendingRelease != null) return
+    retryDelayMs = INITIAL_RETRY_DELAY_MS
+    emitLive()
+  }
+
+  private fun onResumeFailed(message: String) {
+    consoleError("sqldelight-androidx-opfs: resume failed: $message")
+    val r = releaser ?: return
+    if(pendingRelease != null) return
+    releaser = null
+    r.release()
+    emitPaused()
+    scheduleRetry()
+  }
+
+  private fun scheduleRetry() {
+    if(!documentIsVisible()) return
+    val delayMs = retryDelayMs
+    retryDelayMs = minOf(delayMs * 2, MAX_RETRY_DELAY_MS)
+    retryTimer = scheduleTimeout(delayMs) {
+      retryTimer = null
+      if(documentIsVisible() && releaser == null) requestLock()
+    }
+  }
+
+  private fun cancelRetry() {
+    retryTimer?.let(::cancelTimeout)
+    retryTimer = null
+  }
+
+  private fun emitLive() {
+    if(live) return
+    live = true
+    onLive()
+  }
+
+  private fun emitPaused() {
+    if(!live) return
+    live = false
+    onPaused()
   }
 
   private fun onWanting() {

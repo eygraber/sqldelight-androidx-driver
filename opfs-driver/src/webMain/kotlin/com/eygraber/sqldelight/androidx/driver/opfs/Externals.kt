@@ -46,7 +46,7 @@ internal fun createModuleWorker(blobUrl: String): Worker = js(
  * `new MessageChannel()` wrapped to also transfer `port2` to [worker]. Returns `port1`, which
  * stays on the main thread for control-message traffic from the worker.
  *
- * The control channel keeps internal handshake messages (currently just the pause-ack) off the
+ * The control channel keeps internal handshake messages (the pause and resume acks) off the
  * worker's default port so the AndroidX `WebWorkerSQLiteDriver` — which listens on the default
  * port and parses every message as a SQL reply — never sees them.
  */
@@ -83,17 +83,40 @@ internal fun postOpfsResume(worker: Worker) {
 
 /**
  * A handle to the main-thread end of the control [MessageChannel]. Externalized here so the
- * orchestrator can subscribe to pause-ack messages without leaking a reference to the underlying
- * `MessagePort` (the `org.w3c.dom.MessagePort` binding has different shapes between js and
- * wasmJs targets, and we only need a single-shot listener).
+ * orchestrator can subscribe to the worker's acknowledgements without leaking a reference to the
+ * underlying `MessagePort` (the `org.w3c.dom.MessagePort` binding has different shapes between
+ * js and wasmJs targets, and we only need a single listener).
  */
 internal external class MessagePortLike
 
-/** Subscribes [callback] to pause-ack messages on the control port. */
-internal fun listenForPausedAck(controlPort: MessagePortLike, callback: () -> Unit) {
+/** Subscribes the orchestrator callbacks to the worker's acknowledgements on the control port. */
+internal fun listenForControlMessages(
+  controlPort: MessagePortLike,
+  onPausedAck: () -> Unit,
+  onResumedAck: () -> Unit,
+  onResumeFailed: (String) -> Unit,
+) {
   js(
-    """controlPort.onmessage = (ev) => { if (ev.data && ev.data.__opfsPausedAck) callback(); }""",
+    """
+      controlPort.onmessage = (ev) => {
+        const data = ev.data;
+        if (!data) return;
+        if (data.__opfsPausedAck) onPausedAck();
+        else if (data.__opfsResumedAck) onResumedAck();
+        else if (data.__opfsResumeFailed !== undefined) onResumeFailed(String(data.__opfsResumeFailed));
+      }
+    """,
   )
+}
+
+/** `setTimeout(callback, delayMs)`; returns the timer id for [cancelTimeout]. */
+internal fun scheduleTimeout(delayMs: Int, callback: () -> Unit): Int = js(
+  """setTimeout(callback, delayMs)""",
+)
+
+/** `clearTimeout(id)` for a timer created by [scheduleTimeout]. */
+internal fun cancelTimeout(id: Int) {
+  js("clearTimeout(id)")
 }
 
 /** True when this document is currently visible (`document.visibilityState === 'visible'`). */
