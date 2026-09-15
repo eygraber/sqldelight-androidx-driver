@@ -43,6 +43,10 @@ internal suspend fun awaitOpfsRelease() {
   }
 }
 
+internal suspend fun releaseForegroundLock() {
+  stealLockPromise("sqldelight-androidx-opfs-foreground").await<JsAny?>()
+}
+
 actual fun testSqliteDriver(): SQLiteDriver = WebWorkerSQLiteDriver(newTestWorker())
 
 actual suspend fun deleteFile(name: String) {
@@ -55,6 +59,11 @@ actual suspend fun deleteFile(name: String) {
         .catch(() => undefined)""",
 )
 private external fun removeOpfsEntryPromise(name: String): Promise<JsAny?>
+
+@JsFun(
+  """(name) => navigator.locks.request(name, { steal: true }, () => undefined).catch(() => undefined)""",
+)
+private external fun stealLockPromise(name: String): Promise<JsAny?>
 
 @JsFun(
   """(name) => navigator.storage.getDirectory()
