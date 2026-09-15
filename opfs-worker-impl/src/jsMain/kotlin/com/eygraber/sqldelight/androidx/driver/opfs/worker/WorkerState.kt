@@ -39,8 +39,7 @@ internal enum class PauseState { Live, Resuming, Paused }
 
 internal var pauseState = PauseState.Live
 
-// A __opfsPause arrived while the resume chain was in flight. The pause work and its ack are
-// deferred until the chain settles — see onResumeSettled/onResumeFailed in WorkerMain.
+// Set when a __opfsPause must wait for the resume chain to settle or for an open transaction to end.
 internal var pendingPause = false
 
 internal val pausedQueue = mutableListOf<MessageEventLike>()

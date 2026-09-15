@@ -60,14 +60,18 @@ private fun routeDriverMessage(e: MessageEventLike) {
     return
   }
   dispatchLocal(requestMsg.id, requestMsg.data)
+  if(pendingPause && pauseState == PauseState.Live && !anyLocalDbInTransaction()) {
+    completePause()
+  }
 }
 
-// The resume chain finished claiming handles. If a pause arrived mid-chain, release them
-// again and only now ack — the orchestrator holds the Web Lock until the ack arrives.
-private fun onResumeSettled() {
-  if(pendingPause) {
-    pendingPause = false
-    pauseState = PauseState.Paused
+private fun anyLocalDbInTransaction(): Boolean =
+  databases.values.any { db -> db.instance != null && dbIsInTransaction(sqlite3, db.instance) }
+
+private fun completePause() {
+  pendingPause = false
+  pauseState = PauseState.Paused
+  if(poolUtil != null) {
     suspendLocalInstances()
     try {
       poolPauseVfs(poolUtil)
@@ -75,7 +79,15 @@ private fun onResumeSettled() {
     catch(err: Throwable) {
       consoleErrorWith("sqldelight-androidx-opfs-worker: pauseVfs failed", err)
     }
-    controlPort?.let(::controlPortAck)
+  }
+  controlPort?.let(::controlPortAck)
+}
+
+// The resume chain finished claiming handles. If a pause arrived mid-chain, release them
+// again and only now ack — the orchestrator holds the Web Lock until the ack arrives.
+private fun onResumeSettled() {
+  if(pendingPause) {
+    completePause()
     return
   }
   pauseState = PauseState.Live
@@ -133,21 +145,21 @@ private fun onMessage(e: MessageEventLike) {
       return
     }
     if(multiTabMode == "PauseOnHidden" && pauseState == PauseState.Live) {
-      pauseState = PauseState.Paused
-      if(poolUtil != null) {
-        suspendLocalInstances()
-        try {
-          poolPauseVfs(poolUtil)
-        }
-        catch(err: Throwable) {
-          consoleErrorWith("sqldelight-androidx-opfs-worker: pauseVfs failed", err)
-        }
+      if(anyLocalDbInTransaction()) {
+        pendingPause = true
+        return
       }
+      completePause()
+      return
     }
     controlPort?.let(::controlPortAck)
     return
   }
   if(isObject(data) && isObject(data.__opfsResume)) {
+    if(multiTabMode == "PauseOnHidden" && pauseState == PauseState.Live) {
+      pendingPause = false
+      return
+    }
     if(multiTabMode == "PauseOnHidden" && pauseState == PauseState.Paused) {
       pauseState = PauseState.Resuming
       if(poolUtil == null) {

@@ -196,6 +196,8 @@ Pass an `OpfsMultiTabMode` to `androidxSqliteOpfsDriver(...)` to pick how tabs c
 - **`PauseOnHidden` (default)** — the active tab uses the database; backgrounded tabs pause and
   queue their queries until they regain focus. Adds no per-query overhead. Use this when your
   app is primarily used in one tab at a time, or if it is OK for queries to queue when your tab is not active.
+  If a tab is hidden while a transaction is open, the hand-off waits until that transaction ends.
+  The other tab gets the database after the commit or the rollback.
 - **`Shared`** — every tab can run queries concurrently regardless of focus. One tab is elected
   the database owner and serves queries on behalf of the others; ownership transfers
   automatically when the owning tab closes. Use this when users may actively interact with
