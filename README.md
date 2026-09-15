@@ -182,12 +182,17 @@ On web, build the `databaseType` with `AndroidxSqliteDatabaseType.File("my.db")`
 persisted in the browser's [Origin Private File System].
 
 > [!IMPORTANT]
-> Use a plain file name (e.g. `"my.db"`) on web. Hierarchical paths like `"data/my.db"` aren't
-> supported.
+> On web the file name is a flat key in the OPFS pool. The pool accepts a name like `"data/my.db"`
+> as one key and creates no directory. A name over 511 bytes fails to open.
 
 > [!NOTE]
 > If your project only targets web, you don't need `expect`/`actual` — just call
 > `androidxSqliteOpfsDriver()` and pass it to `AndroidxSqliteDriver`.
+
+CI runs the test suites on both web targets. The `js` target works with the default Kotlin/JS
+module kind, so `useEsModules()` is not required. The driver resolves the `@sqlite.org/sqlite-wasm`
+files with `new URL(..., import.meta.url)`. The Kotlin/JS webpack build rewrites these URLs into
+bundled asset URLs.
 
 #### Closing the driver
 
@@ -762,7 +767,7 @@ port, and terminates the worker. If the worker does not acknowledge within ten s
 thread proceeds anyway.
 
 The SAHPool VFS keeps a flat pool of pre-allocated handles rather than honoring real OPFS paths,
-which is why hierarchical file names aren't supported.
+which is why a file name with a path separator is stored as one flat key.
 
 The worker source is embedded as a string and instantiated from a `Blob` URL, so consumers don't
 need to copy any JS resource into their bundle. The `@sqlite.org/sqlite-wasm` npm dependency is
@@ -792,10 +797,13 @@ To use the bundled worker with your own `WebWorkerSQLiteDriver`, call `opfsWorke
 ## Contributing
 
 The Apple test suite runs on macOS runners; everything else (Android host, JVM, Native, and the
-`wasmJs` browser tests) runs on Linux. The browser tests drive Karma + headless Chrome — `./gradlew
-allTests` will download Chrome via Kotlin's build infrastructure on first run, but you need a
-working X-less Chromium-compatible binary on your `PATH` for local runs to succeed (the standard
-`google-chrome-stable` / `chromium` package satisfies it).
+`js` and `wasmJs` browser tests) runs on Linux. The driver, integration, and coroutines test
+suites live in `commonTest` and run on every target, including both browser targets. Tests that
+need threads, `OpenFlags`, or more than one connection stay in `nonWebTest`. The browser tests
+drive Karma + headless Chrome — `./gradlew allTests` will download Chrome via Kotlin's build
+infrastructure on first run, but you need a working X-less Chromium-compatible binary on your
+`PATH` for local runs to succeed (the standard `google-chrome-stable` / `chromium` package
+satisfies it).
 
 [Origin Private File System]: https://developer.mozilla.org/en-US/docs/Web/API/File_System_API/Origin_private_file_system
 [AndroidX example worker]: https://cs.android.com/androidx/platform/frameworks/support/+/androidx-main:sqlite/sqlite-web-worker-test/web-worker/worker.js

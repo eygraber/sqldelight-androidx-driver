@@ -92,37 +92,37 @@ private fun localStep(id: dynamic, requestData: dynamic) {
 
 // 'close' is fire-and-forget on the driver side: only post a reply on error.
 private fun localClose(id: dynamic, requestData: dynamic) {
-  if(isObject(requestData.statementId)) {
-    val stmtId = requestData.statementId.unsafeCast<Int>()
-    val stmt = statements[stmtId]
-    if(stmt == null) {
-      replyError(id, "Invalid statement ID: $stmtId")
-      return
-    }
-    try {
-      if(stmt.instance != null) stmtFinalize(stmt.instance)
-      statements.remove(stmtId)
-    }
-    catch(error: Throwable) {
-      replyError(id, error.message ?: error.toString())
-      return
-    }
+  val error = when {
+    isObject(requestData.statementId) -> closeStatement(requestData.statementId.unsafeCast<Int>())
+    else -> null
+  } ?: when {
+    isObject(requestData.databaseId) -> closeDatabase(requestData.databaseId.unsafeCast<Int>())
+    else -> null
   }
-  if(isObject(requestData.databaseId)) {
-    val dbId = requestData.databaseId.unsafeCast<Int>()
-    val db = databases[dbId]
-    if(db == null) {
-      replyError(id, "Invalid database ID: $dbId")
-      return
-    }
-    try {
-      if(db.instance != null) dbClose(db.instance)
-      databases.remove(dbId)
-    }
-    catch(error: Throwable) {
-      replyError(id, error.message ?: error.toString())
-      return
-    }
+  if(error != null) replyError(id, error)
+}
+
+private fun closeStatement(stmtId: Int): String? {
+  val stmt = statements[stmtId] ?: return "Invalid statement ID: $stmtId"
+  return try {
+    if(stmt.instance != null) stmtFinalize(stmt.instance)
+    statements.remove(stmtId)
+    null
+  }
+  catch(error: Throwable) {
+    error.message ?: error.toString()
+  }
+}
+
+private fun closeDatabase(dbId: Int): String? {
+  val db = databases[dbId] ?: return "Invalid database ID: $dbId"
+  return try {
+    if(db.instance != null) dbClose(db.instance)
+    databases.remove(dbId)
+    null
+  }
+  catch(error: Throwable) {
+    error.message ?: error.toString()
   }
 }
 

@@ -44,6 +44,19 @@ kotlin {
     }
   }
 
+  js {
+    browser {
+      testTask {
+        testLogging {
+          exceptionFormat = TestExceptionFormat.FULL
+        }
+        useKarma {
+          useChromeHeadlessNoSandbox()
+        }
+      }
+    }
+  }
+
   @OptIn(ExperimentalKotlinGradlePluginApi::class)
   applyDefaultHierarchyTemplate {
     common {
@@ -88,18 +101,12 @@ kotlin {
       implementation(libs.okio)
     }
 
-    named("wasmJsTest").dependencies {
+    named("webTest").dependencies {
       implementation(projects.opfsDriver)
       implementation(libs.androidx.sqliteWeb)
       implementation(libs.kotlinx.browser)
     }
   }
-}
-
-// Web tests run only on wasmJs; the JS test compilation contains no tests, so keep
-// jsBrowserTest from failing when there's nothing to discover.
-tasks.named<AbstractTestTask>("jsBrowserTest") {
-  failOnNoDiscoveredTests = false
 }
 
 sqldelight {

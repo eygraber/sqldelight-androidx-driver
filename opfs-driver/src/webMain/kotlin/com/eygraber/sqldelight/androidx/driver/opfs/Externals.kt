@@ -212,7 +212,7 @@ internal fun requestExclusiveLock(
       }).catch((err) => {
         onFailure(err && err.message ? err.message : String(err));
       });
-      return { release: () => { if (resolveHeld) { resolveHeld(); resolveHeld = null; } } };
+      return { release: function () { if (resolveHeld) { resolveHeld(); resolveHeld = null; } } };
     })()
   """,
 )
