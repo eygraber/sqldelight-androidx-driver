@@ -6,9 +6,13 @@ import app.cash.sqldelight.async.coroutines.awaitAsList
 import app.cash.sqldelight.async.coroutines.awaitAsOne
 import com.eygraber.sqldelight.androidx.driver.opfs.OpfsMultiTabMode
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.await
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
+import org.w3c.dom.Worker
+import kotlin.js.Promise
 import kotlin.random.Random
 import kotlin.random.nextULong
 import kotlin.test.AfterTest
@@ -19,7 +23,8 @@ import kotlin.time.Duration.Companion.seconds
 class AndroidxSqliteWebSharedMultiWorkerTest {
   private val dbName = "integration-shared-multi-${Random.nextULong()}.db"
 
-  private val driverA by lazy { newTestSqlDriver(newTestDriver(OpfsMultiTabMode.Shared), dbName) }
+  private val opfsDriverA by lazy { newTestDriver(OpfsMultiTabMode.Shared) }
+  private val driverA by lazy { newTestSqlDriver(opfsDriverA, dbName) }
   private val databaseA by lazy { AndroidXDb(driverA) }
 
   private val opfsDriverB by lazy { newTestDriver(OpfsMultiTabMode.Shared) }
@@ -140,4 +145,65 @@ class AndroidxSqliteWebSharedMultiWorkerTest {
     assertEquals(0L, databaseA.recordQueries.countForUser(whereUserId = "orphan").awaitAsOne())
     assertEquals(1L, databaseA.recordQueries.countForUser(whereUserId = "survivor").awaitAsOne())
   }
+
+  @Test
+  fun leaderEvictsAFollowerThatTerminatesWithoutClose() = runTest(timeout = 60.seconds) {
+    awaitOpfsRelease()
+    databaseA.recordQueries.countForUser(whereUserId = "warmup").awaitAsOne()
+    val leaderWorker = opfsDriverA.opfsWorker.worker
+    val followerCounts = attachFollowerCountPort(leaderWorker)
+
+    repeat(3) { i ->
+      databaseB.recordQueries.countForUser(whereUserId = "evicted-$i").awaitAsOne()
+    }
+    databaseB.transaction {
+      databaseB.recordQueries.insert(userId = "evicted", withRecord = byteArrayOf(0x01))
+    }
+    assertEquals(2, followerCount(leaderWorker, followerCounts))
+
+    opfsDriverB.opfsWorker.worker.terminate()
+
+    inRealTime {
+      while(followerCount(leaderWorker, followerCounts) != 1) delay(50)
+    }
+
+    assertEquals(1L, databaseA.recordQueries.countForUser(whereUserId = "evicted").awaitAsOne())
+    databaseA.transaction {
+      databaseA.recordQueries.insert(userId = "evicted", withRecord = byteArrayOf(0x02))
+    }
+
+    val databaseC = AndroidXDb(newTestSqlDriver(newTestDriver(OpfsMultiTabMode.Shared), dbName))
+    assertEquals(2L, inRealTime { databaseC.recordQueries.countForUser(whereUserId = "evicted").awaitAsOne() })
+    assertEquals(2, followerCount(leaderWorker, followerCounts))
+  }
 }
+
+private suspend fun followerCount(worker: Worker, control: JsAny): Int = inRealTime {
+  postFollowerCountRequest(worker)
+  nextFollowerCount(control).await<JsNumber>().toInt()
+}
+
+@JsFun("(worker) => worker.postMessage({ __opfsDebugFollowerCount: true })")
+private external fun postFollowerCountRequest(worker: Worker)
+
+@JsFun(
+  """(worker) => {
+    const channel = new MessageChannel();
+    worker.postMessage({ __opfsControlPort: channel.port2 }, [channel.port2]);
+    const queue = [];
+    const waiters = [];
+    channel.port1.onmessage = (ev) => {
+      const data = ev.data || {};
+      if (data.__opfsFollowerCount === undefined) return;
+      const value = data.__opfsFollowerCount;
+      if (waiters.length) waiters.shift()(value); else queue.push(value);
+    };
+    return {
+      next: () => queue.length ? Promise.resolve(queue.shift()) : new Promise((r) => waiters.push(r))
+    };
+  }""",
+)
+private external fun attachFollowerCountPort(worker: Worker): JsAny
+
+@JsFun("(control) => control.next()")
+private external fun nextFollowerCount(control: JsAny): Promise<JsNumber>

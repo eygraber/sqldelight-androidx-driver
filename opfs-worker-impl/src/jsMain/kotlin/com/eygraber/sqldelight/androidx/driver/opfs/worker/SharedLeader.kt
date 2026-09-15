@@ -5,8 +5,49 @@ private fun getFollowerState(followerId: String): dynamic {
   if(s == null) {
     s = newFollowerState()
     followerStates[followerId] = s
+    if(followerId != tabId) {
+      followerWatches[followerId] = watchLockRelease(tabLockName(followerId)) { onFollowerLost(followerId) }
+    }
   }
   return s
+}
+
+private fun evictFollower(followerId: String) {
+  val watch = followerWatches.remove(followerId)
+  if(watch != null) abortLockWatch(watch)
+  val state = followerStates.remove(followerId) ?: return
+  val stmts = jsMapValues(state.statements)
+  for(i in 0 until jsArrayLength(stmts)) {
+    val entry = jsArrayGet(stmts, i)
+    if(entry.instance == null) continue
+    try {
+      stmtFinalize(entry.instance)
+    }
+    catch(error: Throwable) {
+      consoleErrorWith("sqldelight-androidx-opfs-worker: finalize after the follower was lost failed", error)
+    }
+  }
+}
+
+private fun evictIdleFollower(followerId: String) {
+  val state = followerStates[followerId] ?: return
+  if(jsMapSize(state.statements) == 0 && jsMapSize(state.databases) == 0) evictFollower(followerId)
+}
+
+private fun onFollowerLost(followerId: String) {
+  evictFollower(followerId)
+  for(queue in sharedRequestQueues.values) {
+    queue.removeAll { it.followerId == followerId }
+  }
+  for((fileName, owner) in sharedTransactionOwners.toList()) {
+    if(owner.followerId == followerId) onTransactionOwnerLost(fileName, owner)
+  }
+}
+
+internal fun evictAllFollowers() {
+  for(followerId in followerStates.keys.toList()) {
+    evictFollower(followerId)
+  }
 }
 
 private fun ensureLeaderDb(state: dynamic, opaqueDatabaseId: dynamic, fileName: dynamic): dynamic {
@@ -20,7 +61,7 @@ private fun ensureLeaderDb(state: dynamic, opaqueDatabaseId: dynamic, fileName: 
     val fileNameStr = fileName.unsafeCast<String>()
     var shared = sharedLeaderConnections[fileNameStr]
     if(shared == null) {
-      shared = openPoolDbWithRetry(fileNameStr)
+      shared = newOpfsSAHPoolDb(poolUtil, fileNameStr)
       sharedLeaderConnections[fileNameStr] = shared
     }
     entry = newDbEntry(fileName, shared)
@@ -66,8 +107,7 @@ private fun SharedTransactionOwner.matches(followerId: String, opaqueDatabaseId:
   this.followerId == followerId && this.opaqueDatabaseId == opaqueDatabaseId
 
 private fun releaseTransactionOwner(fileName: String) {
-  val owner = sharedTransactionOwners.remove(fileName) ?: return
-  if(owner.lockWatch != null) abortLockWatch(owner.lockWatch)
+  sharedTransactionOwners.remove(fileName)
 }
 
 private fun rollbackAndRelease(fileName: String) {
@@ -94,13 +134,7 @@ private fun syncTransactionOwner(followerId: String, opaqueDatabaseId: dynamic, 
   val owner = sharedTransactionOwners[fileName]
   val inTransaction = dbIsInTransaction(sqlite3, db)
   if(inTransaction && owner == null) {
-    val newOwner = SharedTransactionOwner(followerId, opaqueDatabaseId)
-    if(followerId != tabId) {
-      newOwner.lockWatch = watchLockRelease(tabLockName(followerId)) {
-        onTransactionOwnerLost(fileName, newOwner)
-      }
-    }
-    sharedTransactionOwners[fileName] = newOwner
+    sharedTransactionOwners[fileName] = SharedTransactionOwner(followerId, opaqueDatabaseId)
   }
   else if(!inTransaction && owner != null) {
     releaseTransactionOwner(fileName)
@@ -122,6 +156,7 @@ private fun executeAndReply(
   }
   val result = executeLeaderRequest(followerId, payload)
   if(fileName != null) syncTransactionOwner(followerId, requestDatabaseId(payload), fileName)
+  if(payload.cmd.unsafeCast<String>() == "close") evictIdleFollower(followerId)
   reply(result)
 }
 
@@ -274,7 +309,7 @@ internal fun closeSharedMode() {
     releaseTransactionOwner(fileName)
   }
   sharedRequestQueues.clear()
-  followerStates.clear()
+  evictAllFollowers()
   for(db in sharedLeaderConnections.values) {
     try {
       dbClose(db)
@@ -321,6 +356,7 @@ private fun handleSharedMessage(channel: BroadcastChannelLike, e: MessageEventLi
         val leaderId = m.leaderId.unsafeCast<String>()
         val leaderChanged = knownLeaderId != leaderId
         knownLeaderId = leaderId
+        if(isLeader) evictAllFollowers()
         isLeader = false
         if(leaderChanged) retryPendingRequests()
         if(!acceptingDriverMessages) {
