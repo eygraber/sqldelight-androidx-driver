@@ -35,14 +35,14 @@ public enum class OpfsMultiTabMode {
    * into the background pause access and queue their queries until they regain focus. Adds no
    * per-query overhead. The trade-off is that a backgrounded tab cannot run queries until it's
    * brought back to the foreground — a tab opened in a separate window that doesn't yet have
-   * focus will appear frozen if it tries to run startup queries.
+   * focus will appear frozen if it tries to run startup queries. The default.
    */
   PauseOnHidden,
 
   /**
    * All tabs can run queries concurrently. One tab is automatically elected as the database
    * owner and serves queries on behalf of the others; ownership transfers automatically when
-   * the owning tab closes. The default — works regardless of which tabs have focus.
+   * the owning tab closes. Works regardless of which tabs have focus.
    *
    * Trade-offs: queries from non-owner tabs incur a cross-tab message round-trip, and in-flight
    * transactions on the owner tab are not preserved if it closes mid-transaction (the new owner
@@ -86,9 +86,9 @@ public enum class OpfsMultiTabMode {
  * transitive `@sqlite.org/sqlite-wasm` npm dep, then handed to the worker so it can dynamic-import
  * sqlite3 and override `locateFile` for the wasm companion.
  *
- * @param multiTabMode strategy for sharing the database across multiple tabs of the same origin.
- *   Defaults to [OpfsMultiTabMode.Shared] which lets every tab run queries regardless of focus.
- *   See the enum entries for the trade-offs of each mode.
+ * @param multiTabMode strategy to share the database across multiple tabs of the same origin.
+ *   Defaults to [OpfsMultiTabMode.PauseOnHidden], where only the visible tab runs queries and
+ *   backgrounded tabs queue theirs. See the enum entries for the trade-offs of each mode.
  * @param onLockStateChange optional callback invoked on the main thread whenever this worker
  *   transitions between [OpfsLockState.Live] and [OpfsLockState.Paused]. Use it to surface a
  *   visible indicator when another tab/window is using the database. Always fires once

@@ -242,7 +242,7 @@ Database(
     connectionFactory = object : AndroidxSqliteConnectionFactory {
       override val driver = BundledSQLiteDriver()
       
-      override fun createConnection(name: String) =
+      override suspend fun createConnection(name: String) =
         driver.open(name, SQLITE_OPEN_READWRITE or SQLITE_OPEN_CREATE)
     },
     databaseType = AndroidxSqliteDatabaseType.File("<absolute path to db file>"),
