@@ -130,6 +130,7 @@ internal fun leaderProcess(followerId: String, payload: dynamic): dynamic {
 
 private fun setupLeader() {
   isLeader = true
+  knownLeaderId = tabId
   acceptingDriverMessages = true
   bc?.postMessage(bcLeaderChanged(tabId))
   retryPendingRequests()
@@ -179,12 +180,15 @@ private fun handleSharedMessage(channel: BroadcastChannelLike, e: MessageEventLi
       handleLeaderResponse(m.reqId.unsafeCast<Int>(), m.response)
     kind == "leader-changed" ->
       if(m.leaderId != tabId) {
+        val leaderId = m.leaderId.unsafeCast<String>()
+        val leaderChanged = knownLeaderId != leaderId
+        knownLeaderId = leaderId
         isLeader = false
         if(!acceptingDriverMessages) {
           acceptingDriverMessages = true
           drainQueuedDriverMessages()
         }
-        retryPendingRequests()
+        if(leaderChanged) retryPendingRequests()
       }
     kind == "who-is-leader" && isLeader ->
       channel.postMessage(bcLeaderChanged(tabId))
@@ -235,7 +239,10 @@ internal fun processOwnDriverAsLeader(
     return
   }
   when(cmd) {
-    "close" -> Unit // fire-and-forget on success
+    "close" -> {
+      if(isObject(requestData.statementId)) statements.remove(requestData.statementId.unsafeCast<Int>())
+      if(isObject(requestData.databaseId)) databases.remove(requestData.databaseId.unsafeCast<Int>())
+    }
     "open" -> replyOk(driverId, newOpenReplyData(preAllocatedOpaque ?: 0))
     "prepare" -> replyOk(
       driverId,

@@ -43,6 +43,8 @@ private class PauseOnHiddenOrchestrator(
   // promise (and thereby release the Web Lock). See [dropLock] / [onPausedAck].
   private var pendingRelease: LockReleaser? = null
 
+  private var lockGeneration = 0
+
   // Cross-tab signal channel. Non-focused holders drop the lock when a peer broadcasts wanting.
   private lateinit var contentionBc: BroadcastChannelLike
 
@@ -64,15 +66,18 @@ private class PauseOnHiddenOrchestrator(
     if(releaser != null) return
     // Tell other tabs we want the lock — any holder that isn't focused will yield.
     postContentionWanting(contentionBc)
+    val generation = ++lockGeneration
     releaser = requestExclusiveLock(
       name = LOCK_NAME,
       onAcquired = {
-        postOpfsResume(handle.worker)
-        onLive()
+        if(generation == lockGeneration && releaser != null) {
+          postOpfsResume(handle.worker)
+          onLive()
+        }
       },
       onFailure = { err ->
         consoleError("sqldelight-androidx-opfs: foreground lock failed: $err")
-        releaser = null
+        if(generation == lockGeneration) releaser = null
       },
     )
   }

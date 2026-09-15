@@ -21,6 +21,7 @@ internal val tabId: String = newTabId()
 
 internal var bc: BroadcastChannelLike? = null
 internal var isLeader = false
+internal var knownLeaderId: String? = null
 internal var pendingLeaderResponses = mutableMapOf<Int, dynamic>()
 internal var nextForwardReqId = 0
 
