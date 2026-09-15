@@ -1,5 +1,6 @@
 package com.eygraber.sqldelight.androidx.driver
 
+import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteConcurrencyModel.Companion.CpuCacheHitOptimizedProvider
 import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteConcurrencyModel.Companion.memoryOptimizedProvider
 import kotlinx.coroutines.CloseableCoroutineDispatcher
 import kotlinx.coroutines.CoroutineDispatcher
@@ -18,9 +19,11 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
  * The underlying thread will be blocked for the duration of any database operation
  * (including the entire transaction for explicit transactions).
  *
- * Defaults to the value provided by [memoryOptimizedProvider]. On non-web targets,
- * `CpuCacheHitOptimizedProvider` is also available for workloads that prefer pinning
- * each connection to its own thread.
+ * Defaults to the value provided by [memoryOptimizedProvider]. Use [CpuCacheHitOptimizedProvider]
+ * to pin each connection to its own thread.
+ *
+ * On web the driver uses one connection for every model. It does not use [readerCount]
+ * or the dispatcher provider there.
  *
  * @property readerCount The number of reader connections to maintain in the pool
  */
@@ -33,10 +36,21 @@ public sealed class AndroidxSqliteConcurrencyModel {
   public companion object {
     public const val DISPATCHER_NAME: String = "AndroidxSqliteDriver"
 
+    /**
+     * A provider that creates a fixed thread pool sized to the requested parallelism.
+     * It is not available on web. Access to it throws [UnsupportedOperationException] there.
+     */
+    public val CpuCacheHitOptimizedProvider: (Int, String) -> CoroutineDispatcher
+      get() = cpuCacheHitOptimizedProvider()
+
+    @OptIn(ExperimentalCoroutinesApi::class)
     public fun memoryOptimizedProvider(
       dispatcher: CoroutineDispatcher = defaultIoDispatcher(),
     ): (Int, String) -> CoroutineDispatcher = { parallelism, name ->
-      memoryOptimizedDispatcher(dispatcher, parallelism, name)
+      dispatcher.limitedParallelism(
+        parallelism = parallelism,
+        name = name,
+      )
     }
   }
 
@@ -186,8 +200,4 @@ public sealed class AndroidxSqliteConcurrencyModel {
 
 internal expect fun defaultIoDispatcher(): CoroutineDispatcher
 
-internal expect fun memoryOptimizedDispatcher(
-  dispatcher: CoroutineDispatcher,
-  parallelism: Int,
-  name: String,
-): CoroutineDispatcher
+internal expect fun cpuCacheHitOptimizedProvider(): (Int, String) -> CoroutineDispatcher

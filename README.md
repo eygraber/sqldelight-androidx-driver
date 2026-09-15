@@ -654,6 +654,10 @@ AndroidxSqliteConfiguration(
 > In-Memory and temporary databases automatically use `SingleReaderWriter` model regardless of configuration, as
 > connection pooling provides no benefit for these database types.
 
+> [!NOTE]  
+> On web (`js` / `wasmJs`) every model resolves to one connection, so `readerCount` and the dispatcher provider
+> have no effect there. Shared configuration in `commonMain` works on web without changes.
+
 ## Dispatchers
 
 The driver runs SQLite work on its own `CoroutineDispatcher`, sized to match the concurrency model
@@ -674,12 +678,12 @@ AndroidxSqliteConcurrencyModel.memoryOptimizedProvider()
 // Allocates a dedicated thread pool (via newFixedThreadPoolContext).
 // Each connection tends to stay on the same thread, which helps CPU cache locality
 // at the cost of extra OS threads.
-//
-// Only available on non-web targets — JS and wasmJs are single-threaded, so a fixed
-// thread pool has no meaning there. The provider lives in the non-web source set, so
-// it isn't visible from `commonMain` if your project also targets web.
 AndroidxSqliteConcurrencyModel.CpuCacheHitOptimizedProvider
 ```
+
+`CpuCacheHitOptimizedProvider` is not available on web, because web targets have no threads. Access
+to it throws `UnsupportedOperationException` there. Use `memoryOptimizedProvider()` in shared code
+that also runs on web.
 
 `memoryOptimizedProvider()` also accepts a base dispatcher if you'd rather derive parallelism from
 somewhere other than `Dispatchers.IO`:

@@ -14,7 +14,9 @@ import kotlin.random.nextULong
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class AndroidxSqliteWebDriverTest {
   private val schema = object : SqlSchema<QueryResult.AsyncValue<Unit>> {
@@ -167,6 +169,72 @@ class AndroidxSqliteWebDriverTest {
     assertEquals(inserts.toLong() to inserts.toLong(), committedAndTotal)
 
     driver.close()
+  }
+
+  @Test
+  fun multipleReadersSingleWriterResolvesToOneConnection() = runTest {
+    val driver = AndroidxSqliteDriver(
+      driver = webTestSqliteDriver(),
+      databaseType = AndroidxSqliteDatabaseType.File(newDbName()),
+      schema = schema,
+      configuration = AndroidxSqliteConfiguration(
+        concurrencyModel = AndroidxSqliteConcurrencyModel.MultipleReadersSingleWriter(
+          isWal = true,
+          walCount = 3,
+        ),
+      ),
+    )
+
+    val transacter = object : SuspendingTransacterImpl(driver) {}
+
+    val inserts = 10
+    coroutineScope {
+      repeat(inserts) { i ->
+        launch {
+          transacter.transaction {
+            driver.execute(null, "INSERT INTO test VALUES ($i, 'committed')", 0).await()
+          }
+        }
+        launch {
+          driver.executeQuery(
+            identifier = null,
+            sql = "SELECT COUNT(*) FROM test",
+            mapper = { cursor ->
+              QueryResult.AsyncValue {
+                cursor.next().await()
+                requireNotNull(cursor.getLong(0))
+              }
+            },
+            parameters = 0,
+          ).await()
+        }
+      }
+    }
+
+    val count = driver.executeQuery(
+      identifier = null,
+      sql = "SELECT COUNT(*) FROM test",
+      mapper = { cursor ->
+        QueryResult.AsyncValue {
+          cursor.next().await()
+          requireNotNull(cursor.getLong(0))
+        }
+      },
+      parameters = 0,
+    ).await()
+
+    assertEquals(inserts.toLong(), count)
+
+    driver.close()
+  }
+
+  @Test
+  fun cpuCacheHitOptimizedProviderIsNotAvailable() {
+    val failure = assertFailsWith<UnsupportedOperationException> {
+      AndroidxSqliteConcurrencyModel.CpuCacheHitOptimizedProvider
+    }
+
+    assertTrue(failure.message.orEmpty().contains("not available on web"))
   }
 
   @Test

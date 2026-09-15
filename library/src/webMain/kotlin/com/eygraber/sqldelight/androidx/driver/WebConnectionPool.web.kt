@@ -15,8 +15,9 @@ import kotlinx.coroutines.sync.withLock
  * shared connection ("cannot start a transaction within a transaction"), and statements outside
  * a transaction could run inside someone else's open transaction.
  *
- * Readers share the writer's lock because there is only one connection — this mirrors the
- * `readerCount == 0` behavior of [AndroidxDriverConnectionPool].
+ * Every [AndroidxSqliteConcurrencyModel] resolves to one connection here, in the same way that
+ * non-file databases resolve to [AndroidxSqliteConcurrencyModel.SingleReaderWriter] on other
+ * targets. The pool does not use the model's reader count or its dispatcher.
  *
  * Both `createDefaultConnectionPool` and `createPassthroughConnectionPool` resolve to this
  * implementation on web.
