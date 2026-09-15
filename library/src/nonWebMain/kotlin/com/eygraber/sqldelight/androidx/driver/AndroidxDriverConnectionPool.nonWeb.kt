@@ -5,7 +5,6 @@ import androidx.sqlite.async.executeSQL
 import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteConcurrencyModel.MultipleReaders
 import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteConcurrencyModel.MultipleReadersSingleWriter
 import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteConcurrencyModel.SingleReaderWriter
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
@@ -17,7 +16,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.concurrent.Volatile
 
 internal class AndroidxDriverConnectionPool(
-  connectionFactory: AndroidxSqliteConnectionFactory,
+  private val connectionFactory: AndroidxSqliteConnectionFactory,
   nameProvider: () -> String,
   private val isFileBased: Boolean,
   private val configuration: AndroidxSqliteConfiguration,
@@ -25,19 +24,10 @@ internal class AndroidxDriverConnectionPool(
 ) : ConnectionPool {
   private val name by lazy { nameProvider() }
 
-  // The suspend versions of `createConnection` / `executeSQL` exist for cross-platform parity
-  // with web; on non-web they don't actually suspend, so wrapping in runBlocking inside the
-  // lazy initializer is purely a type adapter.
-  private val lazyWriterConnection = lazy {
-    runBlocking {
-      connectionFactory
-        .createConnection(name)
-        .withWriterConfiguration(configuration)
-    }
-  }
-  private val writerConnection: SQLiteConnection get() = lazyWriterConnection.value
-
   private val writerMutex = Mutex()
+
+  @Volatile
+  private var writerConnection: SQLiteConnection? = null
 
   @Volatile
   private var concurrencyModel: AndroidxSqliteConcurrencyModel
@@ -80,6 +70,12 @@ internal class AndroidxDriverConnectionPool(
     readerPool.populate(concurrencyModel.readerCount)
   }
 
+  private suspend fun writer(): SQLiteConnection =
+    writerConnection ?: connectionFactory
+      .createConnection(name)
+      .withWriterConfiguration(configuration)
+      .also { writerConnection = it }
+
   override suspend fun <R> runOnDispatcher(block: suspend () -> R) =
     when(currentCoroutineContext()[TransactionElement]) {
       null -> withContext(concurrencyModel.dispatcher) {
@@ -91,14 +87,16 @@ internal class AndroidxDriverConnectionPool(
 
   override suspend fun acquireWriterConnection(): SQLiteConnection {
     writerMutex.lock()
-    return try {
-      writerConnection
+    var handedOff = false
+    try {
+      val connection = writer()
+      handedOff = true
+      return connection
     }
-    catch(t: Throwable) {
-      // If the lazy writer connection's initializer throws (e.g. failed to open the db or run
-      // writer PRAGMAs), we must release the mutex so future acquires aren't blocked forever.
-      writerMutex.unlock()
-      throw t
+    finally {
+      // If opening the writer or running its PRAGMAs throws, we must release the mutex so
+      // future acquires aren't blocked forever.
+      if(!handedOff) writerMutex.unlock()
     }
   }
 
@@ -124,14 +122,14 @@ internal class AndroidxDriverConnectionPool(
         locked = true
       }
       if(!locked) return null
-      val connection = writerConnection
+      val connection = writer()
       handedOff = true
       return connection
     }
     finally {
       // If the lock was taken but we're leaving without handing the connection to the caller —
-      // cancellation after tryLock() succeeded, or the lazy writerConnection initializer throwing —
-      // release it so the writer isn't leaked.
+      // cancellation after tryLock() succeeded, or opening the writer throwing — release it so
+      // the writer isn't leaked.
       if(locked && !handedOff) writerMutex.unlock()
     }
   }
@@ -151,13 +149,8 @@ internal class AndroidxDriverConnectionPool(
   override suspend fun releaseReaderConnection(connection: SQLiteConnection) {
     when(concurrencyModel.readerCount) {
       0 -> releaseWriterConnection()
-      // The writer is only a possible reader if the lazy was already materialized; reading
-      // .value here would otherwise force-init the writer (open + writer PRAGMAs) just to do
-      // a reference comparison against a connection we know came from the reader pool.
       else -> when {
-        lazyWriterConnection.isInitialized() && connection === writerConnection ->
-          releaseWriterConnection()
-
+        connection === writerConnection -> releaseWriterConnection()
         else -> readerPool.release(connection)
       }
     }
@@ -226,49 +219,20 @@ internal class AndroidxDriverConnectionPool(
     try {
       runBlocking {
         writerMutex.withLock {
-          if(lazyWriterConnection.isInitialized()) {
-            writerConnection.close()
-          }
+          writerConnection?.close()
+          writerConnection = null
         }
+      }
 
-        val priorCapacity = readerPool.currentCapacity
-        val drained = readerPool.drainAndClose()
-        val outstanding = priorCapacity - drained
-        check(outstanding == 0) {
-          "AndroidxDriverConnectionPool.close() called while $outstanding reader connection(s) still checked out"
-        }
+      val priorCapacity = readerPool.currentCapacity
+      val drained = readerPool.drainAndClose()
+      val outstanding = priorCapacity - drained
+      check(outstanding == 0) {
+        "AndroidxDriverConnectionPool.close() called while $outstanding reader connection(s) still checked out"
       }
     }
     finally {
       concurrencyModel.close()
     }
   }
-}
-
-private suspend fun SQLiteConnection.withWriterConfiguration(
-  configuration: AndroidxSqliteConfiguration,
-): SQLiteConnection {
-  try {
-    configuration.apply {
-      executeSQL("PRAGMA journal_mode = ${journalMode.value};")
-      executeSQL("PRAGMA synchronous = ${sync.value};")
-
-      // this must come after PRAGMA journal_mode while https://issuetracker.google.com/issues/447613208 is broken
-      val foreignKeys = if(isForeignKeyConstraintsEnabled) "ON" else "OFF"
-      executeSQL("PRAGMA foreign_keys = $foreignKeys;")
-    }
-  }
-  catch(c: CancellationException) {
-    throw c
-  }
-  catch(t: Throwable) {
-    try {
-      close()
-    }
-    catch(closeFailure: Throwable) {
-      t.addSuppressed(closeFailure)
-    }
-    throw t
-  }
-  return this
 }
