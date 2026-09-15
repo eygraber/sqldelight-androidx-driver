@@ -37,6 +37,14 @@ internal fun ensureLocalSqlite(onDone: () -> Unit, onError: (dynamic) -> Unit) {
   }
 }
 
+internal fun whenLocalSqliteInitSettled(onSettled: () -> Unit) {
+  if(!localSqliteInitInFlight) {
+    onSettled()
+    return
+  }
+  localSqliteInitWaiters.add(onSettled to { _ -> onSettled() })
+}
+
 private fun finishLocalSqliteInitSuccess() {
   localSqliteInitInFlight = false
   val waiters = localSqliteInitWaiters.toList()

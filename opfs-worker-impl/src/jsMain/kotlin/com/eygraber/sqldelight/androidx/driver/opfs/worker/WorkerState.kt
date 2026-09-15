@@ -6,7 +6,7 @@ internal var poolUtil: dynamic = null
 internal var initData: dynamic = null
 internal var multiTabMode: String = "Single"
 
-internal var controlPort: MessagePortLike? = null
+internal val controlPorts = mutableListOf<MessagePortLike>()
 
 // Maps for follower-side / single-mode state. Backed by Kotlin maps; their entries are
 // JS objects (constructed via [newDbEntry] / [newStmtEntry]) so the worker stays a faithful
@@ -20,6 +20,8 @@ internal var nextStatementId = 0
 internal val tabId: String = newTabId()
 
 internal var bc: BroadcastChannelLike? = null
+internal var leaderLock: LockHandle? = null
+internal var tabLock: LockHandle? = null
 internal var isLeader = false
 internal var knownLeaderId: String? = null
 internal var pendingLeaderResponses = mutableMapOf<Int, dynamic>()
@@ -64,3 +66,7 @@ internal val sharedTransactionOwners = mutableMapOf<String, SharedTransactionOwn
 internal val sharedRequestQueues = mutableMapOf<String, MutableList<QueuedLeaderRequest>>()
 
 internal var initStarted = false
+
+internal var closeRequested = false
+
+internal var pendingClose = false

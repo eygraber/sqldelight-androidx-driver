@@ -22,6 +22,12 @@ external interface MessagePortLike {
 external interface BroadcastChannelLike {
   fun postMessage(message: dynamic)
   fun addEventListener(type: String, listener: (MessageEventLike) -> Unit)
+  fun close()
+}
+
+external interface LockHandle {
+  fun release()
+  fun abort()
 }
 
 internal fun newBroadcastChannel(name: String): BroadcastChannelLike = js(
@@ -62,29 +68,23 @@ internal fun consoleErrorWith(message: String, error: dynamic) {
   js("console.error(message, error)")
 }
 
-internal fun requestLeaderLock(
+@Suppress("UnusedParameter")
+internal fun requestLock(
   name: String,
   onAcquired: () -> Unit,
   onFailure: (dynamic) -> Unit,
-) {
-  js(
-    """
-      navigator.locks.request(name, { mode: 'exclusive' }, () => {
-        onAcquired();
-        return new Promise(() => {});
-      }).catch((err) => { onFailure(err); })
-    """,
-  )
-}
-
-internal fun holdLock(name: String) {
-  js(
-    """
-      navigator.locks.request(name, { mode: 'exclusive' }, () => new Promise(() => {}))
-        .catch(() => {})
-    """,
-  )
-}
+): LockHandle = js(
+  """(function() {
+    var controller = new AbortController();
+    var resolveHeld;
+    var held = new Promise(function(r) { resolveHeld = r; });
+    navigator.locks.request(name, { mode: 'exclusive', signal: controller.signal }, function() {
+      onAcquired();
+      return held;
+    }).catch(function(err) { onFailure(err); });
+    return { release: function() { resolveHeld(); }, abort: function() { controller.abort(); } };
+  })()""",
+)
 
 internal fun watchLockRelease(name: String, onReleased: () -> Unit): dynamic = js(
   """(function() {
@@ -144,6 +144,11 @@ internal fun controlPortResumedAck(controlPort: MessagePortLike) {
 @Suppress("UnusedParameter")
 internal fun controlPortResumeFailed(controlPort: MessagePortLike, message: String) {
   js("controlPort.postMessage({ __opfsResumeFailed: message })")
+}
+
+@Suppress("UnusedParameter")
+internal fun controlPortClosedAck(controlPort: MessagePortLike) {
+  js("controlPort.postMessage({ __opfsClosedAck: true })")
 }
 
 internal fun isObject(value: dynamic): Boolean = js(

@@ -189,6 +189,27 @@ persisted in the browser's [Origin Private File System].
 > If your project only targets web, you don't need `expect`/`actual` — just call
 > `androidxSqliteOpfsDriver()` and pass it to `AndroidxSqliteDriver`.
 
+#### Closing the driver
+
+`androidxSqliteOpfsDriver()` returns an `OpfsSqliteDriver`. It owns a Web Worker that holds the
+OPFS handles, the multi-tab Web Locks, and the cross-tab channels. `AndroidxSqliteDriver.close()`
+closes the connection and then closes the `OpfsSqliteDriver`, which releases all of these and
+terminates the worker. Call it when you recreate the database, for example on logout.
+
+```kotlin
+val driver = AndroidxSqliteDriver(
+  driver = androidxSqliteOpfsDriver(),
+  databaseType = AndroidxSqliteDatabaseType.File("my.db"),
+  schema = Database.Schema,
+)
+
+// later
+driver.close()
+```
+
+`close()` is idempotent. After it, `open` on the `OpfsSqliteDriver` fails with an
+`IllegalStateException`, and queries that the worker had queued fail with an exception.
+
 #### Multi-tab support
 
 Pass an `OpfsMultiTabMode` to `androidxSqliteOpfsDriver(...)` to pick how tabs coordinate access:
@@ -229,7 +250,8 @@ val driver = androidxSqliteOpfsDriver(
 ```
 
 The callback fires once synchronously with the initial state, and again on each transition. In
-`Single` and `Shared` modes it fires exactly once with `Live`.
+`Single` and `Shared` modes it fires exactly once with `Live`. It does not fire after the driver
+is closed.
 
 For background on how the web driver is built and how to substitute your own worker if
 `:opfs-driver` doesn't fit your needs, see [Web driver design notes](#web-driver-design-notes).
@@ -723,8 +745,17 @@ For additional background on WAL mode and dispatcher tuning, see [WAL & Dispatch
 `WebWorkerSQLiteDriver`, a transport that delegates SQL execution to a Web Worker implementing
 its protocol. The `:opfs-driver` module ships such a worker built on top of
 [`@sqlite.org/sqlite-wasm`]'s [OPFS Sync Access Handle Pool VFS][SAHPool], so database files are
-persisted in the browser's [Origin Private File System]. `androidxSqliteOpfsDriver(...)` is a
-convenience factory that bundles the worker with `WebWorkerSQLiteDriver`.
+persisted in the browser's [Origin Private File System]. `androidxSqliteOpfsDriver(...)` returns
+an `OpfsSqliteDriver`, a `SQLiteDriver` that delegates to `WebWorkerSQLiteDriver` and adds
+`close()`. `opfsWorker(...)` returns the underlying `OpfsWorker`, which exposes the `Worker` and
+the same `close()`.
+
+`WebWorkerSQLiteDriver` never terminates its worker. `OpfsWorker.close()` sends a close message
+to the worker, which closes its databases, releases the SAH handles, releases its Web Locks, and
+closes its `BroadcastChannel` before it acknowledges. The main thread then releases the
+foreground Web Lock (in `PauseOnHidden`), removes its listeners and timers, closes the control
+port, and terminates the worker. If the worker does not acknowledge within ten seconds, the main
+thread proceeds anyway.
 
 The SAHPool VFS keeps a flat pool of pre-allocated handles rather than honoring real OPFS paths,
 which is why hierarchical file names aren't supported.
@@ -750,6 +781,9 @@ any `Worker` that implements its protocol:
 // src/webMain/kotlin
 actual fun createSqliteDriver(): SQLiteDriver = WebWorkerSQLiteDriver(myWorker())
 ```
+
+To use the bundled worker with your own `WebWorkerSQLiteDriver`, call `opfsWorker()` and pass
+`OpfsWorker.worker`. Keep the `OpfsWorker` and call its `close()` after you close the driver.
 
 ## Contributing
 
