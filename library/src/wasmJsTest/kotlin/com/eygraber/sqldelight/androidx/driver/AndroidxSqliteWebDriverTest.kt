@@ -170,6 +170,33 @@ class AndroidxSqliteWebDriverTest {
   }
 
   @Test
+  fun setJournalModeAppliesThePragma() = runTest {
+    val driver = AndroidxSqliteDriver(
+      driver = webTestSqliteDriver(),
+      databaseType = AndroidxSqliteDatabaseType.File(newDbName()),
+      schema = schema,
+    )
+
+    driver.execute(null, "PRAGMA journal_mode = TRUNCATE", 0).await()
+
+    val journalMode = driver.executeQuery(
+      identifier = null,
+      sql = "PRAGMA journal_mode",
+      mapper = { cursor ->
+        QueryResult.AsyncValue {
+          cursor.next().await()
+          cursor.getString(0)
+        }
+      },
+      parameters = 0,
+    ).await()
+
+    assertEquals("truncate", journalMode)
+
+    driver.close()
+  }
+
+  @Test
   fun rolledBackTransactionDiscardsChanges() = runTest {
     val driver = AndroidxSqliteDriver(
       driver = webTestSqliteDriver(),

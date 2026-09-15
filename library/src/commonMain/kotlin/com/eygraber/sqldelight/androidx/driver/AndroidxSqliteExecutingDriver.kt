@@ -219,8 +219,10 @@ internal class AndroidxSqliteExecutingDriver(
         setJournalMode(
           sql = sql,
           mapper = { cursor ->
-            cursor.next()
-            QueryResult.AsyncValue { cursor.getString(0) }
+            QueryResult.AsyncValue {
+              cursor.next().await()
+              cursor.getString(0)
+            }
           },
           parameters = parameters,
           binders = binders,
