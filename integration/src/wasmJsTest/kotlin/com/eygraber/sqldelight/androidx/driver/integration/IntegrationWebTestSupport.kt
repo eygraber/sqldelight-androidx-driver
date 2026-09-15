@@ -6,39 +6,44 @@ import androidx.sqlite.SQLiteDriver
 import androidx.sqlite.driver.web.WebWorkerSQLiteDriver
 import com.eygraber.sqldelight.androidx.driver.opfs.OpfsMultiTabMode
 import com.eygraber.sqldelight.androidx.driver.opfs.opfsWorker
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.await
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import org.w3c.dom.Worker
 import kotlin.js.Promise
 
-// `WebWorkerSQLiteDriver.close()` doesn't terminate the underlying Worker, so the OPFS SAH handles
-// it acquired stay locked until the page unloads. Tests have to terminate their workers explicitly
-// in cleanup and then yield long enough for the browser to actually release the sync access
-// handles before the next test installs a fresh pool — `Worker.terminate()` is asynchronous.
+// The wasmJs test runner does not await a suspend after-hook, so the wait for released OPFS handles runs at the start of the next test.
 private val knownTestWorkers = mutableSetOf<Worker>()
 
-internal fun freshTestWorker(mode: OpfsMultiTabMode = OpfsMultiTabMode.Single): Worker {
-  knownTestWorkers.forEach { it.terminate() }
-  knownTestWorkers.clear()
+internal fun newTestWorker(mode: OpfsMultiTabMode = OpfsMultiTabMode.Single): Worker {
   val w = opfsWorker(mode)
   knownTestWorkers.add(w)
   return w
 }
 
-internal fun additionalTestWorker(mode: OpfsMultiTabMode): Worker {
-  val w = opfsWorker(mode)
-  knownTestWorkers.add(w)
-  return w
-}
-
-// Should be called from each test's @AfterTest after closing the driver — ensures the workers are
-// dead and OPFS sync access handles have been released before the next test starts.
-internal suspend fun terminateAndSettleTestWorkers() {
+internal fun terminateTestWorkers() {
   knownTestWorkers.forEach { it.terminate() }
   knownTestWorkers.clear()
-  kotlinx.coroutines.delay(500)
 }
 
-actual fun testSqliteDriver(): SQLiteDriver = WebWorkerSQLiteDriver(freshTestWorker())
+internal suspend fun awaitOpfsRelease() {
+  withContext(Dispatchers.Default) {
+    var attempts = 0
+    var released = false
+    while(!released) {
+      val result = removeOpfsDirectoryPromise(".opfs-sahpool").await<JsString>().toString()
+      released = result == "ok" || result == "NotFoundError"
+      if(!released) {
+        attempts++
+        check(attempts < 100) { "the OPFS SAH pool was not released: $result" }
+        delay(100)
+      }
+    }
+  }
+}
+
+actual fun testSqliteDriver(): SQLiteDriver = WebWorkerSQLiteDriver(newTestWorker())
 
 actual suspend fun deleteFile(name: String) {
   removeOpfsEntryPromise(name).await<JsAny?>()
@@ -50,3 +55,10 @@ actual suspend fun deleteFile(name: String) {
         .catch(() => undefined)""",
 )
 private external fun removeOpfsEntryPromise(name: String): Promise<JsAny?>
+
+@JsFun(
+  """(name) => navigator.storage.getDirectory()
+        .then(d => d.removeEntry(name, { recursive: true }).then(() => 'ok', (e) => String(e.name)))
+        .catch((e) => String(e && e.name))""",
+)
+private external fun removeOpfsDirectoryPromise(name: String): Promise<JsString>

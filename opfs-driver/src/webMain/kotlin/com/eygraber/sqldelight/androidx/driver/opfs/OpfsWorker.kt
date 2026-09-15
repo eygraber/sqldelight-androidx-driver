@@ -48,6 +48,10 @@ public enum class OpfsMultiTabMode {
    * transactions on the owner tab are not preserved if it closes mid-transaction (the new owner
    * starts with fresh connections).
    *
+   * A transaction gives its tab exclusive use of the database file until the transaction ends.
+   * Requests from other tabs for that file wait in arrival order. If the tab in a transaction
+   * closes, the owner rolls the transaction back and serves the queued requests.
+   *
    * Ownership transfer is at-least-once: requests that never received a response from the old
    * owner are retried against the new one. If the old owner executed a write but closed before
    * responding, the retry executes that write a second time. Statements whose duplicate

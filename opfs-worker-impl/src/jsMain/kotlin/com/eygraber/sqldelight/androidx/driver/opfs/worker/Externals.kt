@@ -77,6 +77,28 @@ internal fun requestLeaderLock(
   )
 }
 
+internal fun holdLock(name: String) {
+  js(
+    """
+      navigator.locks.request(name, { mode: 'exclusive' }, () => new Promise(() => {}))
+        .catch(() => {})
+    """,
+  )
+}
+
+internal fun watchLockRelease(name: String, onReleased: () -> Unit): dynamic = js(
+  """(function() {
+    var controller = new AbortController();
+    navigator.locks.request(name, { mode: 'exclusive', signal: controller.signal }, () => { onReleased(); })
+      .catch(() => {});
+    return controller;
+  })()""",
+)
+
+internal fun abortLockWatch(controller: dynamic) {
+  js("controller.abort()")
+}
+
 internal fun installSqliteOpfsSAHPoolVfs(sqlite3: dynamic): Promise<dynamic> = js(
   """sqlite3.installOpfsSAHPoolVfs({ clearOnInit: false })""",
 )
@@ -282,6 +304,14 @@ internal fun stmtColumnCount(stmt: dynamic): Int = js("stmt.columnCount")
 internal fun dbClose(db: dynamic) {
   js("db.close()")
 }
+
+internal fun dbExec(db: dynamic, sql: String) {
+  js("db.exec(sql)")
+}
+
+internal fun dbIsInTransaction(sqlite3: dynamic, db: dynamic): Boolean = js(
+  """sqlite3.capi.sqlite3_get_autocommit(db.pointer) === 0""",
+)
 
 internal fun poolPauseVfs(util: dynamic) {
   js("util.pauseVfs()")

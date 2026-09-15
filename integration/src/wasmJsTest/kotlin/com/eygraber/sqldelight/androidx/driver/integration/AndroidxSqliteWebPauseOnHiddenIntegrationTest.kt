@@ -17,25 +17,24 @@ import kotlin.test.assertEquals
 
 class AndroidxSqliteWebPauseOnHiddenIntegrationTest {
   private val dbName = "integration-pauseonhidden-${Random.nextULong()}.db"
-  private val worker = freshTestWorker(OpfsMultiTabMode.PauseOnHidden)
-  private val driver = AndroidxSqliteDriver(
-    driver = WebWorkerSQLiteDriver(worker),
-    databaseType = AndroidxSqliteDatabaseType.File(dbName),
-    schema = AndroidXDb.Schema,
-  )
-  private val database = AndroidXDb(driver)
+  private val database by lazy {
+    AndroidXDb(
+      AndroidxSqliteDriver(
+        driver = WebWorkerSQLiteDriver(newTestWorker(OpfsMultiTabMode.PauseOnHidden)),
+        databaseType = AndroidxSqliteDatabaseType.File(dbName),
+        schema = AndroidXDb.Schema,
+      ),
+    )
+  }
 
   @AfterTest
-  fun cleanup() = runTest {
-    driver.close()
-    terminateAndSettleTestWorkers()
-    deleteFile(dbName)
-    deleteFile("$dbName-shm")
-    deleteFile("$dbName-wal")
+  fun cleanup() {
+    terminateTestWorkers()
   }
 
   @Test
   fun insertedRowsAreVisibleViaSqlDelightGeneratedQueries() = runTest {
+    awaitOpfsRelease()
     database.transaction {
       database.recordQueries.insert(
         userId = "pause-1",

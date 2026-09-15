@@ -1,4 +1,5 @@
 import com.android.build.api.variant.HasUnitTest
+import org.gradle.api.tasks.testing.logging.TestExceptionFormat
 import org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi
 import org.jetbrains.kotlin.gradle.ExperimentalWasmDsl
 import org.jetbrains.kotlin.gradle.dsl.ExplicitApiMode
@@ -30,6 +31,9 @@ kotlin {
   wasmJs {
     browser {
       testTask {
+        testLogging {
+          exceptionFormat = TestExceptionFormat.FULL
+        }
         useKarma {
           // ChromeHeadlessNoSandbox so the browser starts under restricted CI runners
           // (the default chrome-headless launcher fails to start on GitHub-hosted Linux

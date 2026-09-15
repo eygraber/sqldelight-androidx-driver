@@ -15,10 +15,13 @@ class AndroidxSqliteWebIntegrationTest : AndroidxSqliteIntegrationTest() {
     AndroidxSqliteDatabaseType.File("integration-${Random.nextULong()}.db")
 
   @AfterTest
-  fun terminateWorker() = runTest { terminateAndSettleTestWorkers() }
+  fun terminateWorker() {
+    terminateTestWorkers()
+  }
 
   @Test
   fun insertedRowsAreVisibleViaSqlDelightGeneratedQueries() = runTest {
+    awaitOpfsRelease()
     database.withTransaction {
       database.recordQueries.insert(
         userId = "user-1",

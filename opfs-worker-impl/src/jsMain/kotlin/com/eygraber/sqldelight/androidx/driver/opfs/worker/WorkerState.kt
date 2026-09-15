@@ -48,4 +48,20 @@ internal val pausedQueue = mutableListOf<MessageEventLike>()
 // Shared connections live until the worker terminates; followers may still reference them.
 internal val sharedLeaderConnections = mutableMapOf<String, dynamic>()
 
+internal class SharedTransactionOwner(
+  val followerId: String,
+  val opaqueDatabaseId: dynamic,
+) {
+  var lockWatch: dynamic = null
+}
+
+internal class QueuedLeaderRequest(
+  val followerId: String,
+  val payload: dynamic,
+  val reply: (dynamic) -> Unit,
+)
+
+internal val sharedTransactionOwners = mutableMapOf<String, SharedTransactionOwner>()
+internal val sharedRequestQueues = mutableMapOf<String, MutableList<QueuedLeaderRequest>>()
+
 internal var initStarted = false

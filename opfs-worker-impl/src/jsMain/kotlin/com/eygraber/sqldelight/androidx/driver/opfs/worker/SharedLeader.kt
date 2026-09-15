@@ -51,7 +51,104 @@ private fun ensureLeaderStmt(
   return entry
 }
 
-internal fun leaderProcess(followerId: String, payload: dynamic): dynamic {
+private fun tabLockName(id: String): String = "sqldelight-androidx-opfs-tab-$id"
+
+private fun requestDatabaseId(payload: dynamic): dynamic =
+  if(isObject(payload.opaqueDatabaseId)) payload.opaqueDatabaseId else payload.statementDatabaseId
+
+private fun requestFileName(state: dynamic, payload: dynamic): String? {
+  if(isObject(payload.fileName)) return payload.fileName.unsafeCast<String>()
+  val entry = jsMapGet(state.databases, requestDatabaseId(payload))
+  return if(isObject(entry) && isObject(entry.fileName)) entry.fileName.unsafeCast<String>() else null
+}
+
+private fun SharedTransactionOwner.matches(followerId: String, opaqueDatabaseId: dynamic): Boolean =
+  this.followerId == followerId && this.opaqueDatabaseId == opaqueDatabaseId
+
+private fun releaseTransactionOwner(fileName: String) {
+  val owner = sharedTransactionOwners.remove(fileName) ?: return
+  if(owner.lockWatch != null) abortLockWatch(owner.lockWatch)
+}
+
+private fun rollbackAndRelease(fileName: String) {
+  val db = sharedLeaderConnections[fileName]
+  if(db != null && dbIsInTransaction(sqlite3, db)) {
+    try {
+      dbExec(db, "ROLLBACK")
+    }
+    catch(error: Throwable) {
+      consoleErrorWith("sqldelight-androidx-opfs-worker: rollback after the transaction owner was lost failed", error)
+    }
+  }
+  releaseTransactionOwner(fileName)
+}
+
+private fun onTransactionOwnerLost(fileName: String, owner: SharedTransactionOwner) {
+  if(sharedTransactionOwners[fileName] !== owner) return
+  rollbackAndRelease(fileName)
+  drainSharedRequests(fileName)
+}
+
+private fun syncTransactionOwner(followerId: String, opaqueDatabaseId: dynamic, fileName: String) {
+  val db = sharedLeaderConnections[fileName] ?: return
+  val owner = sharedTransactionOwners[fileName]
+  val inTransaction = dbIsInTransaction(sqlite3, db)
+  if(inTransaction && owner == null) {
+    val newOwner = SharedTransactionOwner(followerId, opaqueDatabaseId)
+    if(followerId != tabId) {
+      newOwner.lockWatch = watchLockRelease(tabLockName(followerId)) {
+        onTransactionOwnerLost(fileName, newOwner)
+      }
+    }
+    sharedTransactionOwners[fileName] = newOwner
+  }
+  else if(!inTransaction && owner != null) {
+    releaseTransactionOwner(fileName)
+  }
+}
+
+private fun executeAndReply(
+  followerId: String,
+  payload: dynamic,
+  fileName: String?,
+  reply: (dynamic) -> Unit,
+) {
+  if(fileName != null) {
+    val isDatabaseClose = payload.cmd.unsafeCast<String>() == "close" && isObject(payload.opaqueDatabaseId)
+    val owner = sharedTransactionOwners[fileName]
+    if(isDatabaseClose && owner != null && owner.matches(followerId, payload.opaqueDatabaseId)) {
+      rollbackAndRelease(fileName)
+    }
+  }
+  val result = executeLeaderRequest(followerId, payload)
+  if(fileName != null) syncTransactionOwner(followerId, requestDatabaseId(payload), fileName)
+  reply(result)
+}
+
+private fun drainSharedRequests(fileName: String) {
+  val queue = sharedRequestQueues[fileName] ?: return
+  while(queue.isNotEmpty() && sharedTransactionOwners[fileName] == null) {
+    val next = queue.removeAt(0)
+    executeAndReply(next.followerId, next.payload, fileName, next.reply)
+  }
+  if(queue.isEmpty()) sharedRequestQueues.remove(fileName)
+}
+
+internal fun leaderProcess(followerId: String, payload: dynamic, reply: (dynamic) -> Unit) {
+  val fileName = requestFileName(getFollowerState(followerId), payload)
+  if(fileName != null) {
+    val owner = sharedTransactionOwners[fileName]
+    if(owner != null && !owner.matches(followerId, requestDatabaseId(payload))) {
+      sharedRequestQueues.getOrPut(fileName) { mutableListOf() }
+        .add(QueuedLeaderRequest(followerId, payload, reply))
+      return
+    }
+  }
+  executeAndReply(followerId, payload, fileName, reply)
+  if(fileName != null) drainSharedRequests(fileName)
+}
+
+private fun executeLeaderRequest(followerId: String, payload: dynamic): dynamic {
   val state = getFollowerState(followerId)
   return try {
     when(payload.cmd.unsafeCast<String>()) {
@@ -163,6 +260,7 @@ internal fun setupSharedMode() {
   bc = newBroadcastChannel("sqldelight-androidx-opfs").also { channel ->
     channel.addEventListener("message") { e -> handleSharedMessage(channel, e) }
   }
+  holdLock(tabLockName(tabId))
   attemptLeaderLock()
   setupFollower()
 }
@@ -173,8 +271,11 @@ private fun handleSharedMessage(channel: BroadcastChannelLike, e: MessageEventLi
   val kind = m.kind.unsafeCast<String?>()
   when {
     kind == "request" && isLeader -> {
-      val response = leaderProcess(m.followerId.unsafeCast<String>(), m.payload)
-      channel.postMessage(bcResponse(m.followerId, m.reqId, response))
+      val followerId = m.followerId.unsafeCast<String>()
+      val reqId: dynamic = m.reqId
+      leaderProcess(followerId, m.payload) { response ->
+        channel.postMessage(bcResponse(followerId, reqId, response))
+      }
     }
     kind == "response" && m.followerId == tabId ->
       handleLeaderResponse(m.reqId.unsafeCast<Int>(), m.response)
@@ -184,11 +285,11 @@ private fun handleSharedMessage(channel: BroadcastChannelLike, e: MessageEventLi
         val leaderChanged = knownLeaderId != leaderId
         knownLeaderId = leaderId
         isLeader = false
+        if(leaderChanged) retryPendingRequests()
         if(!acceptingDriverMessages) {
           acceptingDriverMessages = true
           drainQueuedDriverMessages()
         }
-        if(leaderChanged) retryPendingRequests()
       }
     kind == "who-is-leader" && isLeader ->
       channel.postMessage(bcLeaderChanged(tabId))
@@ -231,7 +332,18 @@ internal fun processOwnDriverAsLeader(
   else if(cmd == "prepare" && preAllocatedOpaque != null) {
     enriched.opaqueStatementId = preAllocatedOpaque
   }
-  val r = leaderProcess(tabId, enriched)
+  leaderProcess(tabId, enriched) { r ->
+    replyToOwnDriver(driverId, requestData, cmd, preAllocatedOpaque, r)
+  }
+}
+
+private fun replyToOwnDriver(
+  driverId: dynamic,
+  requestData: dynamic,
+  cmd: String,
+  preAllocatedOpaque: Int?,
+  r: dynamic,
+) {
   if(isObject(r.error)) {
     if(cmd == "open" && preAllocatedOpaque != null) databases.remove(preAllocatedOpaque)
     if(cmd == "prepare" && preAllocatedOpaque != null) statements.remove(preAllocatedOpaque)
