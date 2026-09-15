@@ -68,20 +68,60 @@ public enum class OpfsMultiTabMode {
 }
 
 /**
- * Returns a [Worker] that bridges `androidx.sqlite`'s `WebWorkerSQLiteDriver` protocol to
- * `@sqlite.org/sqlite-wasm`'s OPFS VFS. Database files referenced by
- * `AndroidxSqliteDatabaseType.File("name.db")` are persisted in the browser's Origin Private
- * File System.
+ * A running OPFS worker and its multi-tab orchestration. [close] releases the OPFS handles,
+ * the Web Locks, the channels, and the listeners, then terminates [worker]. Close all
+ * connections opened through [worker] first. [close] is idempotent.
+ */
+public class OpfsWorker internal constructor(
+  private val handle: WorkerHandle,
+  private val orchestrator: PauseOnHiddenOrchestrator?,
+) : AutoCloseable {
+  public val worker: Worker get() = handle.worker
+
+  public var isClosed: Boolean = false
+    private set
+
+  private var closeTimer: Int? = null
+
+  override fun close() {
+    if(isClosed) return
+    isClosed = true
+    orchestrator?.detach()
+    handle.onClosedAck = ::terminate
+    closeTimer = scheduleTimeout(CLOSE_ACK_TIMEOUT_MS) { terminate() }
+    postOpfsClose(handle.worker)
+  }
+
+  private fun terminate() {
+    closeTimer?.let(::cancelTimeout)
+    closeTimer = null
+    handle.onClosedAck = {}
+    orchestrator?.releaseLock()
+    closeMessagePort(handle.controlPort)
+    handle.worker.terminate()
+  }
+}
+
+private const val CLOSE_ACK_TIMEOUT_MS = 10_000
+
+/**
+ * Returns an [OpfsWorker] whose [OpfsWorker.worker] bridges `androidx.sqlite`'s
+ * `WebWorkerSQLiteDriver` protocol to `@sqlite.org/sqlite-wasm`'s OPFS VFS. Database files
+ * referenced by `AndroidxSqliteDatabaseType.File("name.db")` are persisted in the browser's
+ * Origin Private File System.
  *
- * Pass it to [androidx.sqlite.driver.web.WebWorkerSQLiteDriver] and hand the resulting driver
- * to `AndroidxSqliteDriver`:
+ * Prefer [androidxSqliteOpfsDriver], which wraps the worker in a closable `SQLiteDriver`. Use
+ * this function when you construct [androidx.sqlite.driver.web.WebWorkerSQLiteDriver] yourself:
  *
  * ```kotlin
+ * val opfsWorker = opfsWorker()
  * val driver = AndroidxSqliteDriver(
- *   driver = WebWorkerSQLiteDriver(opfsWorker()),
+ *   driver = WebWorkerSQLiteDriver(opfsWorker.worker),
  *   databaseType = AndroidxSqliteDatabaseType.File("music.db"),
  *   schema = MusicDatabase.Schema,
  * )
+ * // later, after driver.close():
+ * opfsWorker.close()
  * ```
  *
  * The worker source is embedded as a string and instantiated from a `Blob` URL, so consumers
@@ -97,23 +137,24 @@ public enum class OpfsMultiTabMode {
  *   changes between [OpfsLockState.Live] and [OpfsLockState.Paused]. It fires once
  *   synchronously with the initial state during this call. In `PauseOnHidden` mode, Live fires
  *   after the worker confirms it can serve queries, and Paused fires after the worker confirms
- *   it released the database. Use it to show an indicator when another tab or window uses
- *   the database.
+ *   it released the database. It does not fire after [OpfsWorker.close]. Use it to show an
+ *   indicator when another tab or window uses the database.
  */
 public fun opfsWorker(
   multiTabMode: OpfsMultiTabMode = OpfsMultiTabMode.Default,
   onLockStateChange: ((OpfsLockState) -> Unit)? = null,
-): Worker {
+): OpfsWorker {
   val handle = buildOpfsWorker(multiTabMode)
   val onLive = onLockStateChange?.let { cb -> { cb(OpfsLockState.Live) } } ?: {}
   val onPaused = onLockStateChange?.let { cb -> { cb(OpfsLockState.Paused) } } ?: {}
-  if(multiTabMode == OpfsMultiTabMode.PauseOnHidden) {
+  val orchestrator = if(multiTabMode == OpfsMultiTabMode.PauseOnHidden) {
     startPauseOnHiddenOrchestration(handle, onLive, onPaused)
   }
   else {
     // Single and Shared never voluntarily pause from the consumer's perspective — emit Live
     // once so consumers can write a uniform `state == Live` predicate without a mode check.
     onLive()
+    null
   }
-  return handle.worker
+  return OpfsWorker(handle, orchestrator)
 }

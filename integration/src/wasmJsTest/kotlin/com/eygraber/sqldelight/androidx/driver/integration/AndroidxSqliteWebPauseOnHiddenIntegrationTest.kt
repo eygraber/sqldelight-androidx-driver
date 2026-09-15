@@ -2,20 +2,17 @@
 
 package com.eygraber.sqldelight.androidx.driver.integration
 
-import androidx.sqlite.driver.web.WebWorkerSQLiteDriver
 import app.cash.sqldelight.async.coroutines.awaitAsList
 import app.cash.sqldelight.async.coroutines.awaitAsOne
-import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteDatabaseType
-import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteDriver
 import com.eygraber.sqldelight.androidx.driver.opfs.OpfsLockState
 import com.eygraber.sqldelight.androidx.driver.opfs.OpfsMultiTabMode
+import com.eygraber.sqldelight.androidx.driver.opfs.OpfsSqliteDriver
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.await
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
 import org.w3c.dom.Worker
 import kotlin.js.Promise
 import kotlin.random.Random
@@ -29,26 +26,20 @@ import kotlin.time.Duration.Companion.seconds
 
 class AndroidxSqliteWebPauseOnHiddenIntegrationTest {
   private val dbName = "integration-pauseonhidden-${Random.nextULong()}.db"
-  private val worker by lazy { newTestWorker(OpfsMultiTabMode.PauseOnHidden) }
-  private val database by lazy { newDatabase(worker) }
+  private val driver by lazy { newTestDriver(OpfsMultiTabMode.PauseOnHidden) }
+  private val worker by lazy { driver.opfsWorker.worker }
+  private val database by lazy { newDatabase(driver) }
 
-  private fun newDatabase(worker: Worker) = AndroidXDb(
-    AndroidxSqliteDriver(
-      driver = WebWorkerSQLiteDriver(worker),
-      databaseType = AndroidxSqliteDatabaseType.File(dbName),
-      schema = AndroidXDb.Schema,
-    ),
-  )
+  private fun newDatabase(driver: OpfsSqliteDriver) = AndroidXDb(newTestSqlDriver(driver, dbName))
 
   @AfterTest
   fun cleanup() {
-    terminateTestWorkers()
+    closeTestDrivers()
   }
 
   @Test
   fun insertedRowsAreVisibleViaSqlDelightGeneratedQueries() = runTest {
     awaitOpfsRelease()
-    releaseForegroundLock()
     database.transaction {
       database.recordQueries.insert(
         userId = "pause-1",
@@ -67,7 +58,6 @@ class AndroidxSqliteWebPauseOnHiddenIntegrationTest {
   @Test
   fun pauseDuringTransactionWaitsForTheTransactionToEnd() = runTest {
     awaitOpfsRelease()
-    releaseForegroundLock()
     val transaction = async(Dispatchers.Default) {
       database.transaction {
         database.recordQueries.insert(
@@ -92,7 +82,6 @@ class AndroidxSqliteWebPauseOnHiddenIntegrationTest {
   @Test
   fun pauseOutsideTransactionQueuesQueriesUntilResume() = runTest {
     awaitOpfsRelease()
-    releaseForegroundLock()
     database.transaction {
       database.recordQueries.insert(
         userId = "pause-3",
@@ -113,7 +102,6 @@ class AndroidxSqliteWebPauseOnHiddenIntegrationTest {
   @Test
   fun workerAcksPauseAndResumeOnTheControlPort() = runTest(timeout = 60.seconds) {
     awaitOpfsRelease()
-    releaseForegroundLock()
     val control = attachTestControlPort(worker)
     assertEquals("__opfsResumedAck", awaitControlMessage(control))
 
@@ -135,8 +123,7 @@ class AndroidxSqliteWebPauseOnHiddenIntegrationTest {
   @Test
   fun resumeFailureIsReportedAndALaterResumeSucceeds() = runTest(timeout = 90.seconds) {
     awaitOpfsRelease()
-    releaseForegroundLock()
-    val holder = newTestWorker(OpfsMultiTabMode.Single)
+    val holder = newTestDriver(OpfsMultiTabMode.Single)
     val holderDatabase = newDatabase(holder)
     holderDatabase.transaction {
       holderDatabase.recordQueries.insert(
@@ -150,7 +137,7 @@ class AndroidxSqliteWebPauseOnHiddenIntegrationTest {
     val failure = awaitControlMessage(control)
     assertTrue(failure.startsWith("__opfsResumeFailed:"), failure)
 
-    holder.terminate()
+    holder.close()
     withContext(Dispatchers.Default) { delay(500) }
     postOpfsResume(worker)
     assertEquals("__opfsResumedAck", awaitControlMessage(control))
@@ -160,8 +147,7 @@ class AndroidxSqliteWebPauseOnHiddenIntegrationTest {
   @Test
   fun lockStateReachesLiveOnlyAfterTheWorkerCanServeQueries() = runTest(timeout = 90.seconds) {
     awaitOpfsRelease()
-    releaseForegroundLock()
-    val holder = newTestWorker(OpfsMultiTabMode.Single)
+    val holder = newTestDriver(OpfsMultiTabMode.Single)
     val holderDatabase = newDatabase(holder)
     holderDatabase.transaction {
       holderDatabase.recordQueries.insert(
@@ -171,7 +157,7 @@ class AndroidxSqliteWebPauseOnHiddenIntegrationTest {
     }
 
     val states = mutableListOf<OpfsLockState>()
-    val observed = newTestWorker(OpfsMultiTabMode.PauseOnHidden) { states.add(it) }
+    val observed = newTestDriver(OpfsMultiTabMode.PauseOnHidden) { states.add(it) }
     assertEquals(listOf(OpfsLockState.Paused), states)
     val observedDatabase = newDatabase(observed)
     val pending = async(Dispatchers.Default) {
@@ -181,24 +167,16 @@ class AndroidxSqliteWebPauseOnHiddenIntegrationTest {
     assertEquals(listOf(OpfsLockState.Paused), states)
     assertFalse(pending.isCompleted)
 
-    holder.terminate()
-    val count = withContext(Dispatchers.Default) {
-      withTimeout(REAL_TIME_LIMIT_MS) { pending.await() }
-    }
+    holder.close()
+    val count = inRealTime { pending.await() }
     assertEquals(1L, count)
-    withContext(Dispatchers.Default) {
-      withTimeout(REAL_TIME_LIMIT_MS) {
-        while(states.lastOrNull() != OpfsLockState.Live) delay(50)
-      }
-    }
+    awaitLockState(states, OpfsLockState.Live)
     assertEquals(listOf(OpfsLockState.Paused, OpfsLockState.Live), states)
   }
 }
 
-private const val REAL_TIME_LIMIT_MS = 20_000L
-
-private suspend fun awaitControlMessage(control: JsAny): String = withContext(Dispatchers.Default) {
-  withTimeout(REAL_TIME_LIMIT_MS) { nextControlMessage(control).await<JsString>().toString() }
+private suspend fun awaitControlMessage(control: JsAny): String = inRealTime {
+  nextControlMessage(control).await<JsString>().toString()
 }
 
 @JsFun("(worker) => worker.postMessage({ __opfsPause: true })")

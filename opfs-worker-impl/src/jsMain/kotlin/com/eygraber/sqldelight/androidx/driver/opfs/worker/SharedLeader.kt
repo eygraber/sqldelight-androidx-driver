@@ -239,19 +239,23 @@ private fun setupFollower() {
 }
 
 private fun attemptLeaderLock() {
-  requestLeaderLock(
+  leaderLock = requestLock(
     name = "sqldelight-androidx-opfs-leader",
     onAcquired = {
-      ensureLocalSqlite(
-        onDone = ::setupLeader,
-        onError = { err ->
-          consoleErrorWith("sqldelight-androidx-opfs-worker: failed to initialize sqlite3", err)
-        },
-      )
+      if(!closeRequested) {
+        ensureLocalSqlite(
+          onDone = ::setupLeader,
+          onError = { err ->
+            consoleErrorWith("sqldelight-androidx-opfs-worker: failed to initialize sqlite3", err)
+          },
+        )
+      }
     },
     onFailure = { err ->
-      consoleErrorWith("sqldelight-androidx-opfs-worker: leader lock failed", err)
-      setTimeout(250) { attemptLeaderLock() }
+      if(!closeRequested) {
+        consoleErrorWith("sqldelight-androidx-opfs-worker: leader lock failed", err)
+        setTimeout(250) { attemptLeaderLock() }
+      }
     },
   )
 }
@@ -260,9 +264,42 @@ internal fun setupSharedMode() {
   bc = newBroadcastChannel("sqldelight-androidx-opfs").also { channel ->
     channel.addEventListener("message") { e -> handleSharedMessage(channel, e) }
   }
-  holdLock(tabLockName(tabId))
+  tabLock = requestLock(tabLockName(tabId), onAcquired = {}, onFailure = {})
   attemptLeaderLock()
   setupFollower()
+}
+
+internal fun closeSharedMode() {
+  for(fileName in sharedTransactionOwners.keys.toList()) {
+    releaseTransactionOwner(fileName)
+  }
+  sharedRequestQueues.clear()
+  followerStates.clear()
+  for(db in sharedLeaderConnections.values) {
+    try {
+      dbClose(db)
+    }
+    catch(error: Throwable) {
+      consoleErrorWith("sqldelight-androidx-opfs-worker: close failed", error)
+    }
+  }
+  sharedLeaderConnections.clear()
+  for(pending in pendingLeaderResponses.values) {
+    replyError(pending.driverId, CLOSED_MESSAGE)
+  }
+  pendingLeaderResponses.clear()
+  isLeader = false
+}
+
+internal fun releaseSharedLocks() {
+  leaderLock?.abort()
+  leaderLock?.release()
+  leaderLock = null
+  tabLock?.abort()
+  tabLock?.release()
+  tabLock = null
+  bc?.close()
+  bc = null
 }
 
 private fun handleSharedMessage(channel: BroadcastChannelLike, e: MessageEventLike) {

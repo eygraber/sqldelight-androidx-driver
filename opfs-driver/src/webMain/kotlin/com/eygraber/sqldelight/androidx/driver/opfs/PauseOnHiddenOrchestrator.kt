@@ -22,12 +22,12 @@ internal fun startPauseOnHiddenOrchestration(
   handle: WorkerHandle,
   onLive: () -> Unit,
   onPaused: () -> Unit,
-) {
+): PauseOnHiddenOrchestrator {
   // Initial state: paused — we have to wait for the foreground lock before claiming the OPFS
   // handles. Fires synchronously so the consumer can render the "another window has the
   // database" UI before any Live transition arrives on a microtask.
   onPaused()
-  PauseOnHiddenOrchestrator(handle, onLive, onPaused).start()
+  return PauseOnHiddenOrchestrator(handle, onLive, onPaused).apply { start() }
 }
 
 private const val LOCK_NAME = "sqldelight-androidx-opfs-foreground"
@@ -35,7 +35,7 @@ private const val CONTENTION_CHANNEL_NAME = "sqldelight-androidx-opfs-contention
 private const val INITIAL_RETRY_DELAY_MS = 250
 private const val MAX_RETRY_DELAY_MS = 5_000
 
-private class PauseOnHiddenOrchestrator(
+internal class PauseOnHiddenOrchestrator(
   private val handle: WorkerHandle,
   private val onLive: () -> Unit,
   private val onPaused: () -> Unit,
@@ -58,27 +58,49 @@ private class PauseOnHiddenOrchestrator(
   // Cross-tab signal channel. Non-focused holders drop the lock when a peer broadcasts wanting.
   private lateinit var contentionBc: BroadcastChannelLike
 
+  private val listeners = createAbortController()
+
+  private var detached = false
+
   fun start() {
-    listenForControlMessages(
-      controlPort = handle.controlPort,
-      onPausedAck = { onPausedAck() },
-      onResumedAck = { onResumedAck() },
-      onResumeFailed = { message -> onResumeFailed(message) },
-    )
+    handle.onPausedAck = { onPausedAck() }
+    handle.onResumedAck = { onResumedAck() }
+    handle.onResumeFailed = { message -> onResumeFailed(message) }
     contentionBc = createContentionBroadcastChannel(CONTENTION_CHANNEL_NAME) { onWanting() }
 
     // (document.hasFocus() can be unreliable in headless browsers, so don't gate the initial
     // acquire on it — visibility alone decides.)
     if(documentIsVisible()) requestLock()
 
-    addDocumentEventListener("visibilitychange") { onVisibilityChange() }
-    addSelfEventListener("focus") { onFocus() }
-    addSelfEventListener("blur") { onBlur() }
-    addSelfEventListener("pagehide") { dropLock() }
+    val signal = listeners.signal
+    addDocumentEventListener("visibilitychange", { onVisibilityChange() }, signal)
+    addSelfEventListener("focus", { onFocus() }, signal)
+    addSelfEventListener("blur", { onBlur() }, signal)
+    addSelfEventListener("pagehide", { dropLock() }, signal)
+  }
+
+  /**
+   * Stops all lock requests, listeners, timers, and callbacks. The held Web Lock stays held
+   * until [releaseLock] runs, so the worker can release its handles first.
+   */
+  fun detach() {
+    if(detached) return
+    detached = true
+    cancelRetry()
+    listeners.abort()
+    closeBroadcastChannel(contentionBc)
+  }
+
+  fun releaseLock() {
+    lockGeneration++
+    pendingRelease?.release()
+    pendingRelease = null
+    releaser?.release()
+    releaser = null
   }
 
   private fun requestLock() {
-    if(releaser != null) return
+    if(releaser != null || detached) return
     cancelRetry()
     // Tell other tabs we want the lock — any holder that isn't focused will yield.
     postContentionWanting(contentionBc)
@@ -132,7 +154,7 @@ private class PauseOnHiddenOrchestrator(
   }
 
   private fun scheduleRetry() {
-    if(!documentIsVisible()) return
+    if(detached || !documentIsVisible()) return
     val delayMs = retryDelayMs
     retryDelayMs = minOf(delayMs * 2, MAX_RETRY_DELAY_MS)
     retryTimer = scheduleTimeout(delayMs) {
@@ -147,13 +169,13 @@ private class PauseOnHiddenOrchestrator(
   }
 
   private fun emitLive() {
-    if(live) return
+    if(live || detached) return
     live = true
     onLive()
   }
 
   private fun emitPaused() {
-    if(!live) return
+    if(!live || detached) return
     live = false
     onPaused()
   }

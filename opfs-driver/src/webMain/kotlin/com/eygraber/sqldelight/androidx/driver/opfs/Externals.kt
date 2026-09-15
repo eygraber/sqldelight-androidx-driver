@@ -81,6 +81,15 @@ internal fun postOpfsResume(worker: Worker) {
   js("worker.postMessage({ __opfsResume: true })")
 }
 
+/** Posts `{ __opfsClose: true }` so the worker releases its handles, locks, and channels. */
+internal fun postOpfsClose(worker: Worker) {
+  js("worker.postMessage({ __opfsClose: true })")
+}
+
+internal fun closeMessagePort(port: MessagePortLike) {
+  js("port.onmessage = null; port.close()")
+}
+
 /**
  * A handle to the main-thread end of the control [MessageChannel]. Externalized here so the
  * orchestrator can subscribe to the worker's acknowledgements without leaking a reference to the
@@ -95,6 +104,7 @@ internal fun listenForControlMessages(
   onPausedAck: () -> Unit,
   onResumedAck: () -> Unit,
   onResumeFailed: (String) -> Unit,
+  onClosedAck: () -> Unit,
 ) {
   js(
     """
@@ -104,6 +114,7 @@ internal fun listenForControlMessages(
         if (data.__opfsPausedAck) onPausedAck();
         else if (data.__opfsResumedAck) onResumedAck();
         else if (data.__opfsResumeFailed !== undefined) onResumeFailed(String(data.__opfsResumeFailed));
+        else if (data.__opfsClosedAck) onClosedAck();
       }
     """,
   )
@@ -130,14 +141,23 @@ internal fun documentHasFocus(): Boolean = js(
 )
 
 /** Adds an event listener to `document` — used for `visibilitychange`. */
-internal fun addDocumentEventListener(type: String, listener: () -> Unit) {
-  js("document.addEventListener(type, listener)")
+internal fun addDocumentEventListener(type: String, listener: () -> Unit, signal: AbortSignalLike) {
+  js("document.addEventListener(type, listener, { signal: signal })")
 }
 
 /** Adds an event listener to `self` (window in the main thread). */
-internal fun addSelfEventListener(type: String, listener: () -> Unit) {
-  js("self.addEventListener(type, listener)")
+internal fun addSelfEventListener(type: String, listener: () -> Unit, signal: AbortSignalLike) {
+  js("self.addEventListener(type, listener, { signal: signal })")
 }
+
+internal external class AbortSignalLike
+
+internal external class AbortControllerLike {
+  val signal: AbortSignalLike
+  fun abort()
+}
+
+internal fun createAbortController(): AbortControllerLike = js("new AbortController()")
 
 /**
  * `new BroadcastChannel(name)` plus an `onmessage` handler that fires [onWanting] whenever a
@@ -157,6 +177,10 @@ internal fun createContentionBroadcastChannel(name: String, onWanting: () -> Uni
 /** Broadcasts `{ wanting: true }` on the contention channel. */
 internal fun postContentionWanting(bc: BroadcastChannelLike) {
   js("bc.postMessage({ wanting: true })")
+}
+
+internal fun closeBroadcastChannel(bc: BroadcastChannelLike) {
+  js("bc.onmessage = null; bc.close()")
 }
 
 /**

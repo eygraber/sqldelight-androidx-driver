@@ -2,17 +2,13 @@
 
 package com.eygraber.sqldelight.androidx.driver.integration
 
-import androidx.sqlite.driver.web.WebWorkerSQLiteDriver
 import app.cash.sqldelight.async.coroutines.awaitAsList
 import app.cash.sqldelight.async.coroutines.awaitAsOne
-import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteDatabaseType
-import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteDriver
 import com.eygraber.sqldelight.androidx.driver.opfs.OpfsMultiTabMode
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
-import org.w3c.dom.Worker
 import kotlin.random.Random
 import kotlin.random.nextULong
 import kotlin.test.AfterTest
@@ -23,23 +19,16 @@ import kotlin.time.Duration.Companion.seconds
 class AndroidxSqliteWebSharedMultiWorkerTest {
   private val dbName = "integration-shared-multi-${Random.nextULong()}.db"
 
-  private val workerA by lazy { newTestWorker(OpfsMultiTabMode.Shared) }
-  private val databaseA by lazy { newDatabase(workerA) }
+  private val driverA by lazy { newTestSqlDriver(newTestDriver(OpfsMultiTabMode.Shared), dbName) }
+  private val databaseA by lazy { AndroidXDb(driverA) }
 
-  private val workerB by lazy { newTestWorker(OpfsMultiTabMode.Shared) }
-  private val databaseB by lazy { newDatabase(workerB) }
-
-  private fun newDatabase(worker: Worker) = AndroidXDb(
-    AndroidxSqliteDriver(
-      driver = WebWorkerSQLiteDriver(worker),
-      databaseType = AndroidxSqliteDatabaseType.File(dbName),
-      schema = AndroidXDb.Schema,
-    ),
-  )
+  private val opfsDriverB by lazy { newTestDriver(OpfsMultiTabMode.Shared) }
+  private val driverB by lazy { newTestSqlDriver(opfsDriverB, dbName) }
+  private val databaseB by lazy { AndroidXDb(driverB) }
 
   @AfterTest
   fun cleanup() {
-    terminateTestWorkers()
+    closeTestDrivers()
   }
 
   @Test
@@ -106,6 +95,27 @@ class AndroidxSqliteWebSharedMultiWorkerTest {
   }
 
   @Test
+  fun closingTheLeaderElectsAFollowerThatServesQueries() = runTest(timeout = 60.seconds) {
+    awaitOpfsRelease()
+    databaseA.transaction {
+      databaseA.recordQueries.insert(userId = "handoff", withRecord = byteArrayOf(0x01))
+    }
+    assertEquals(1L, databaseB.recordQueries.countForUser(whereUserId = "handoff").awaitAsOne())
+
+    driverA.close()
+
+    val count = inRealTime { databaseB.recordQueries.countForUser(whereUserId = "handoff").awaitAsOne() }
+    assertEquals(1L, count)
+    databaseB.transaction {
+      databaseB.recordQueries.insert(userId = "handoff", withRecord = byteArrayOf(0x02))
+    }
+    assertEquals(2L, databaseB.recordQueries.countForUser(whereUserId = "handoff").awaitAsOne())
+
+    val databaseC = AndroidXDb(newTestSqlDriver(newTestDriver(OpfsMultiTabMode.Shared), dbName))
+    assertEquals(2L, inRealTime { databaseC.recordQueries.countForUser(whereUserId = "handoff").awaitAsOne() })
+  }
+
+  @Test
   fun leaderRollsBackWhenTheOwnerWorkerTerminates() = runTest(timeout = 60.seconds) {
     awaitOpfsRelease()
     databaseA.recordQueries.countForUser(whereUserId = "warmup").awaitAsOne()
@@ -120,7 +130,7 @@ class AndroidxSqliteWebSharedMultiWorkerTest {
       }
     }
     insertedByB.await()
-    workerB.terminate()
+    opfsDriverB.opfsWorker.worker.terminate()
     orphan.cancel()
 
     databaseA.transaction {

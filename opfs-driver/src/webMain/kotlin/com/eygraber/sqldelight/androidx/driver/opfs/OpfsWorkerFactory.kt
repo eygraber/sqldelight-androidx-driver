@@ -14,7 +14,12 @@ import org.w3c.dom.Worker
 internal class WorkerHandle(
   val worker: Worker,
   val controlPort: MessagePortLike,
-)
+) {
+  var onPausedAck: () -> Unit = {}
+  var onResumedAck: () -> Unit = {}
+  var onResumeFailed: (String) -> Unit = {}
+  var onClosedAck: () -> Unit = {}
+}
 
 /**
  * Spawns the OPFS worker and wires up the control-port plumbing. After this returns:
@@ -37,5 +42,13 @@ internal fun buildOpfsWorker(mode: OpfsMultiTabMode): WorkerHandle {
   postOpfsInit(worker, sqlite3Url, wasmUrl, mode.name)
   val controlPort = createControlChannelAndTransferToWorker(worker)
   revokeBlobUrl(blobUrl)
-  return WorkerHandle(worker, controlPort)
+  val handle = WorkerHandle(worker, controlPort)
+  listenForControlMessages(
+    controlPort = controlPort,
+    onPausedAck = { handle.onPausedAck() },
+    onResumedAck = { handle.onResumedAck() },
+    onResumeFailed = { message -> handle.onResumeFailed(message) },
+    onClosedAck = { handle.onClosedAck() },
+  )
+  return handle
 }
