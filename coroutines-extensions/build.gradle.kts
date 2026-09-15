@@ -38,6 +38,16 @@ kotlin {
     }
   }
 
+  js {
+    browser {
+      testTask {
+        useKarma {
+          useChromeHeadlessNoSandbox()
+        }
+      }
+    }
+  }
+
   @OptIn(ExperimentalKotlinGradlePluginApi::class)
   applyDefaultHierarchyTemplate {
     common {
@@ -86,21 +96,10 @@ kotlin {
       implementation(libs.androidx.sqliteBundled)
     }
 
-    named("wasmJsTest").dependencies {
+    named("webTest").dependencies {
       implementation(projects.opfsDriver)
       implementation(libs.androidx.sqliteWeb)
       implementation(libs.kotlinx.browser)
-      implementation(npm("@sqlite.org/sqlite-wasm", libs.versions.sqliteWasm.get()))
     }
   }
-}
-
-// Web tests run only on wasmJs. The JS test compilation needs expect/actual stubs to satisfy
-// the contract, which makes the JS test task pick up the inherited test methods — but the stub
-// driver throws if any of them actually run, so disable the JS test tasks.
-tasks.named("jsBrowserTest") {
-  enabled = false
-}
-tasks.named("jsTest") {
-  enabled = false
 }

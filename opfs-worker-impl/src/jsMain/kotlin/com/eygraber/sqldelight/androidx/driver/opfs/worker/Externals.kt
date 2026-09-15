@@ -1,3 +1,5 @@
+@file:Suppress("UnusedParameter", "TrimMultilineRawString")
+
 package com.eygraber.sqldelight.androidx.driver.opfs.worker
 
 import kotlin.js.Promise
@@ -68,7 +70,6 @@ internal fun consoleErrorWith(message: String, error: dynamic) {
   js("console.error(message, error)")
 }
 
-@Suppress("UnusedParameter")
 internal fun requestLock(
   name: String,
   onAcquired: () -> Unit,
@@ -136,22 +137,18 @@ internal fun controlPortAck(controlPort: MessagePortLike) {
   js("controlPort.postMessage({ __opfsPausedAck: true })")
 }
 
-@Suppress("UnusedParameter")
 internal fun controlPortResumedAck(controlPort: MessagePortLike) {
   js("controlPort.postMessage({ __opfsResumedAck: true })")
 }
 
-@Suppress("UnusedParameter")
 internal fun controlPortResumeFailed(controlPort: MessagePortLike, message: String) {
   js("controlPort.postMessage({ __opfsResumeFailed: message })")
 }
 
-@Suppress("UnusedParameter")
 internal fun controlPortClosedAck(controlPort: MessagePortLike) {
   js("controlPort.postMessage({ __opfsClosedAck: true })")
 }
 
-@Suppress("UnusedParameter")
 internal fun controlPortFollowerCount(controlPort: MessagePortLike, count: Int) {
   js("controlPort.postMessage({ __opfsFollowerCount: count })")
 }
@@ -176,10 +173,8 @@ internal fun jsMapDelete(map: dynamic, key: dynamic) {
   js("map.delete(key)")
 }
 
-@Suppress("UnusedParameter")
 internal fun jsMapSize(map: dynamic): Int = js("map.size")
 
-@Suppress("UnusedParameter")
 internal fun jsMapValues(map: dynamic): dynamic = js("Array.from(map.values())")
 
 internal fun jsArray(): dynamic = js("[]")
