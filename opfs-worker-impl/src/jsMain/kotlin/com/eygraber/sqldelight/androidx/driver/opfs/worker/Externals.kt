@@ -99,8 +99,9 @@ internal fun abortLockWatch(controller: dynamic) {
   js("controller.abort()")
 }
 
+// sqlite-wasm caches a rejected install, so without forceReinitIfPreviouslyFailed every retry rethrows the first error.
 internal fun installSqliteOpfsSAHPoolVfs(sqlite3: dynamic): Promise<dynamic> = js(
-  """sqlite3.installOpfsSAHPoolVfs({ clearOnInit: false })""",
+  """sqlite3.installOpfsSAHPoolVfs({ clearOnInit: false, forceReinitIfPreviouslyFailed: true })""",
 )
 
 internal fun newOpfsSAHPoolDb(poolUtil: dynamic, fileName: String): dynamic = js(
@@ -133,6 +134,16 @@ internal fun replyError(id: dynamic, error: String) {
 
 internal fun controlPortAck(controlPort: MessagePortLike) {
   js("controlPort.postMessage({ __opfsPausedAck: true })")
+}
+
+@Suppress("UnusedParameter")
+internal fun controlPortResumedAck(controlPort: MessagePortLike) {
+  js("controlPort.postMessage({ __opfsResumedAck: true })")
+}
+
+@Suppress("UnusedParameter")
+internal fun controlPortResumeFailed(controlPort: MessagePortLike, message: String) {
+  js("controlPort.postMessage({ __opfsResumeFailed: message })")
 }
 
 internal fun isObject(value: dynamic): Boolean = js(
