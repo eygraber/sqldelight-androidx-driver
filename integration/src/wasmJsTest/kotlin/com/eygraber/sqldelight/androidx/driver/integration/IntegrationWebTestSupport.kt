@@ -6,7 +6,10 @@ import androidx.sqlite.SQLiteDriver
 import androidx.sqlite.driver.web.WebWorkerSQLiteDriver
 import com.eygraber.sqldelight.androidx.driver.opfs.OpfsMultiTabMode
 import com.eygraber.sqldelight.androidx.driver.opfs.opfsWorker
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.await
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import org.w3c.dom.Worker
 import kotlin.js.Promise
 
@@ -35,7 +38,15 @@ internal fun additionalTestWorker(mode: OpfsMultiTabMode): Worker {
 internal suspend fun terminateAndSettleTestWorkers() {
   knownTestWorkers.forEach { it.terminate() }
   knownTestWorkers.clear()
-  kotlinx.coroutines.delay(500)
+  withContext(Dispatchers.Default) {
+    var attempts = 0
+    var removed = false
+    while(!removed && attempts < 20) {
+      delay(100)
+      removed = removeOpfsDirectoryPromise(".opfs-sahpool").await<JsBoolean>().toBoolean()
+      attempts++
+    }
+  }
 }
 
 actual fun testSqliteDriver(): SQLiteDriver = WebWorkerSQLiteDriver(freshTestWorker())
@@ -50,3 +61,10 @@ actual suspend fun deleteFile(name: String) {
         .catch(() => undefined)""",
 )
 private external fun removeOpfsEntryPromise(name: String): Promise<JsAny?>
+
+@JsFun(
+  """(name) => navigator.storage.getDirectory()
+        .then(d => d.removeEntry(name, { recursive: true }).then(() => true, () => false))
+        .catch(() => false)""",
+)
+private external fun removeOpfsDirectoryPromise(name: String): Promise<JsBoolean>
