@@ -3,33 +3,42 @@
 package com.eygraber.sqldelight.androidx.driver.integration
 
 import androidx.sqlite.SQLiteDriver
-import androidx.sqlite.driver.web.WebWorkerSQLiteDriver
+import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteDatabaseType
+import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteDriver
 import com.eygraber.sqldelight.androidx.driver.opfs.OpfsLockState
 import com.eygraber.sqldelight.androidx.driver.opfs.OpfsMultiTabMode
-import com.eygraber.sqldelight.androidx.driver.opfs.opfsWorker
+import com.eygraber.sqldelight.androidx.driver.opfs.OpfsSqliteDriver
+import com.eygraber.sqldelight.androidx.driver.opfs.androidxSqliteOpfsDriver
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.await
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
-import org.w3c.dom.Worker
+import kotlinx.coroutines.withTimeout
 import kotlin.js.Promise
 
 // The wasmJs test runner does not await a suspend after-hook, so the wait for released OPFS handles runs at the start of the next test.
-private val knownTestWorkers = mutableSetOf<Worker>()
+private val knownTestDrivers = mutableSetOf<OpfsSqliteDriver>()
 
-internal fun newTestWorker(
+internal fun newTestDriver(
   mode: OpfsMultiTabMode = OpfsMultiTabMode.Single,
   onLockStateChange: ((OpfsLockState) -> Unit)? = null,
-): Worker {
-  val w = opfsWorker(mode, onLockStateChange)
-  knownTestWorkers.add(w)
-  return w
+): OpfsSqliteDriver {
+  val driver = androidxSqliteOpfsDriver(mode, onLockStateChange)
+  knownTestDrivers.add(driver)
+  return driver
 }
 
-internal fun terminateTestWorkers() {
-  knownTestWorkers.forEach { it.terminate() }
-  knownTestWorkers.clear()
+internal fun closeTestDrivers() {
+  knownTestDrivers.forEach { it.close() }
+  knownTestDrivers.clear()
 }
+
+internal fun newTestSqlDriver(driver: OpfsSqliteDriver, dbName: String): AndroidxSqliteDriver =
+  AndroidxSqliteDriver(
+    driver = driver,
+    databaseType = AndroidxSqliteDatabaseType.File(dbName),
+    schema = AndroidXDb.Schema,
+  )
 
 internal suspend fun awaitOpfsRelease() {
   withContext(Dispatchers.Default) {
@@ -47,11 +56,19 @@ internal suspend fun awaitOpfsRelease() {
   }
 }
 
-internal suspend fun releaseForegroundLock() {
-  stealLockPromise("sqldelight-androidx-opfs-foreground").await<JsAny?>()
+internal const val REAL_TIME_LIMIT_MS = 20_000L
+
+internal suspend fun <T> inRealTime(block: suspend () -> T): T = withContext(Dispatchers.Default) {
+  withTimeout(REAL_TIME_LIMIT_MS) { block() }
 }
 
-actual fun testSqliteDriver(): SQLiteDriver = WebWorkerSQLiteDriver(newTestWorker())
+internal suspend fun awaitLockState(states: List<OpfsLockState>, expected: OpfsLockState) {
+  inRealTime {
+    while(states.lastOrNull() != expected) delay(50)
+  }
+}
+
+actual fun testSqliteDriver(): SQLiteDriver = newTestDriver()
 
 actual suspend fun deleteFile(name: String) {
   removeOpfsEntryPromise(name).await<JsAny?>()
@@ -63,11 +80,6 @@ actual suspend fun deleteFile(name: String) {
         .catch(() => undefined)""",
 )
 private external fun removeOpfsEntryPromise(name: String): Promise<JsAny?>
-
-@JsFun(
-  """(name) => navigator.locks.request(name, { steal: true }, () => undefined).catch(() => undefined)""",
-)
-private external fun stealLockPromise(name: String): Promise<JsAny?>
 
 @JsFun(
   """(name) => navigator.storage.getDirectory()

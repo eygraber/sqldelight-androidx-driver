@@ -2,11 +2,8 @@
 
 package com.eygraber.sqldelight.androidx.driver.integration
 
-import androidx.sqlite.driver.web.WebWorkerSQLiteDriver
 import app.cash.sqldelight.async.coroutines.awaitAsList
 import app.cash.sqldelight.async.coroutines.awaitAsOne
-import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteDatabaseType
-import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteDriver
 import com.eygraber.sqldelight.androidx.driver.opfs.OpfsMultiTabMode
 import kotlinx.coroutines.test.runTest
 import kotlin.random.Random
@@ -18,18 +15,12 @@ import kotlin.test.assertEquals
 class AndroidxSqliteWebSharedIntegrationTest {
   private val dbName = "integration-shared-${Random.nextULong()}.db"
   private val database by lazy {
-    AndroidXDb(
-      AndroidxSqliteDriver(
-        driver = WebWorkerSQLiteDriver(newTestWorker(OpfsMultiTabMode.Shared)),
-        databaseType = AndroidxSqliteDatabaseType.File(dbName),
-        schema = AndroidXDb.Schema,
-      ),
-    )
+    AndroidXDb(newTestSqlDriver(newTestDriver(OpfsMultiTabMode.Shared), dbName))
   }
 
   @AfterTest
   fun cleanup() {
-    terminateTestWorkers()
+    closeTestDrivers()
   }
 
   @Test

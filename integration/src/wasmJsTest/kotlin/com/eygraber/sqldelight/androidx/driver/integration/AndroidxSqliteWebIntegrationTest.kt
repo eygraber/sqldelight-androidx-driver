@@ -15,8 +15,8 @@ class AndroidxSqliteWebIntegrationTest : AndroidxSqliteIntegrationTest() {
     AndroidxSqliteDatabaseType.File("integration-${Random.nextULong()}.db")
 
   @AfterTest
-  fun terminateWorker() {
-    terminateTestWorkers()
+  fun closeDrivers() {
+    closeTestDrivers()
   }
 
   @Test

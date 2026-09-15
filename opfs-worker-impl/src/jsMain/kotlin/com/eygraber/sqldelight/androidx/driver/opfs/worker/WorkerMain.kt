@@ -12,12 +12,55 @@ internal fun drainQueuedDriverMessages() {
 }
 
 internal fun failQueuedDriverMessages(err: dynamic) {
-  val message = errorMessage(err)
-  while(queuedDriverMessages.isNotEmpty()) {
-    val requestMsg: dynamic = queuedDriverMessages.removeAt(0).data
+  failQueuedDriverMessagesWith(errorMessage(err))
+}
+
+private fun failQueuedDriverMessagesWith(message: String) {
+  failMessagesWith(queuedDriverMessages, message)
+  failMessagesWith(pausedQueue, message)
+}
+
+private fun failMessagesWith(queue: MutableList<MessageEventLike>, message: String) {
+  while(queue.isNotEmpty()) {
+    val requestMsg: dynamic = queue.removeAt(0).data
     val id: dynamic = if(isObject(requestMsg)) requestMsg.id else null
     replyError(id, message)
   }
+}
+
+internal const val CLOSED_MESSAGE = "The OPFS worker is closed."
+
+private fun requestClose() {
+  if(closeRequested) return
+  closeRequested = true
+  when {
+    multiTabMode == "PauseOnHidden" && pauseState == PauseState.Resuming -> pendingClose = true
+    multiTabMode == "PauseOnHidden" -> finishClose()
+    else -> whenLocalSqliteInitSettled(::finishClose)
+  }
+}
+
+private fun finishClose() {
+  pendingClose = false
+  pendingPause = false
+  pauseState = PauseState.Paused
+  failQueuedDriverMessagesWith(CLOSED_MESSAGE)
+  if(multiTabMode == "Shared") closeSharedMode()
+  suspendLocalInstances()
+  if(poolUtil != null) {
+    try {
+      poolPauseVfs(poolUtil)
+    }
+    catch(err: Throwable) {
+      consoleErrorWith("sqldelight-androidx-opfs-worker: pauseVfs failed", err)
+    }
+  }
+  if(multiTabMode == "Shared") releaseSharedLocks()
+  controlPorts.forEach(::controlPortClosedAck)
+}
+
+private fun rejectAfterClose(data: dynamic) {
+  if(isObject(data) && isObject(data.id)) replyError(data.id, CLOSED_MESSAGE)
 }
 
 private fun errorMessage(err: dynamic): String {
@@ -80,18 +123,22 @@ private fun completePause() {
       consoleErrorWith("sqldelight-androidx-opfs-worker: pauseVfs failed", err)
     }
   }
-  controlPort?.let(::controlPortAck)
+  controlPorts.forEach(::controlPortAck)
 }
 
 // The resume chain finished claiming handles. If a pause arrived mid-chain, release them
 // again and only now ack — the orchestrator holds the Web Lock until the ack arrives.
 private fun onResumeSettled() {
+  if(pendingClose) {
+    finishClose()
+    return
+  }
   if(pendingPause) {
     completePause()
     return
   }
   pauseState = PauseState.Live
-  controlPort?.let(::controlPortResumedAck)
+  controlPorts.forEach(::controlPortResumedAck)
   while(pausedQueue.isNotEmpty()) {
     routeDriverMessage(pausedQueue.removeAt(0))
   }
@@ -101,12 +148,16 @@ private fun onResumeSettled() {
 // ack it now so the orchestrator can release the Web Lock. Otherwise report the failure.
 private fun onResumeFailed(err: dynamic) {
   pauseState = PauseState.Paused
-  if(pendingPause) {
-    pendingPause = false
-    controlPort?.let(::controlPortAck)
+  if(pendingClose) {
+    finishClose()
     return
   }
-  controlPort?.let { controlPortResumeFailed(it, errorMessage(err)) }
+  if(pendingPause) {
+    pendingPause = false
+    controlPorts.forEach(::controlPortAck)
+    return
+  }
+  controlPorts.forEach { controlPortResumeFailed(it, errorMessage(err)) }
 }
 
 private fun onMessage(e: MessageEventLike) {
@@ -135,7 +186,15 @@ private fun onMessage(e: MessageEventLike) {
     }
   }
   if(isObject(data) && isObject(data.__opfsControlPort)) {
-    controlPort = data.__opfsControlPort.unsafeCast<MessagePortLike>()
+    controlPorts.add(data.__opfsControlPort.unsafeCast<MessagePortLike>())
+    return
+  }
+  if(isObject(data) && isObject(data.__opfsClose)) {
+    requestClose()
+    return
+  }
+  if(closeRequested) {
+    rejectAfterClose(data)
     return
   }
   if(isObject(data) && isObject(data.__opfsPause)) {
@@ -155,7 +214,7 @@ private fun onMessage(e: MessageEventLike) {
       completePause()
       return
     }
-    controlPort?.let(::controlPortAck)
+    controlPorts.forEach(::controlPortAck)
     return
   }
   if(isObject(data) && isObject(data.__opfsResume)) {
