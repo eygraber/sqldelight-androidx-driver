@@ -372,18 +372,18 @@ abstract class AndroidxSqliteTransacterTest {
   @Test
   fun `currentTransaction is not visible to threads other than the transaction thread`() = runTest {
     val transactionActive = CompletableDeferred<Unit>()
-    val isTransactionVisibleElsewhere = CompletableDeferred<Boolean>()
+    val transactionVisibleElsewhere = CompletableDeferred<Boolean>()
 
     val observer = launch(IoDispatcher) {
       transactionActive.await()
-      isTransactionVisibleElsewhere.complete(driver.currentTransaction() != null)
+      transactionVisibleElsewhere.complete(driver.currentTransaction() != null)
     }
 
     transacter.transaction {
       assertNotNull(driver.currentTransaction())
       transactionActive.complete(Unit)
       assertFalse(
-        isTransactionVisibleElsewhere.await(),
+        transactionVisibleElsewhere.await(),
         "A thread that isn't running the transaction must not see it",
       )
       assertNotNull(driver.currentTransaction())
