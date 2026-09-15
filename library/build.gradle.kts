@@ -34,6 +34,16 @@ kotlin {
     }
   }
 
+  js {
+    browser {
+      testTask {
+        useKarma {
+          useChromeHeadlessNoSandbox()
+        }
+      }
+    }
+  }
+
   android {
     withHostTest {}
 
@@ -116,11 +126,10 @@ kotlin {
       implementation(libs.okio)
     }
 
-    named("wasmJsTest").dependencies {
+    named("webTest").dependencies {
       implementation(projects.opfsDriver)
       implementation(libs.androidx.sqliteWeb)
       implementation(libs.kotlinx.browser)
-      implementation(npm("@sqlite.org/sqlite-wasm", libs.versions.sqliteWasm.get()))
     }
   }
 }

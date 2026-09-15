@@ -1,10 +1,18 @@
+import org.jetbrains.kotlin.gradle.dsl.ExplicitApiMode
+
 plugins {
-  kotlin("multiplatform")
+  id("com.eygraber.conventions-kotlin-multiplatform")
   id("com.eygraber.conventions-detekt2")
 }
 
 kotlin {
-  js(IR) {
+  kmpTargets(
+    KmpTarget.Js,
+    project = project,
+    ignoreDefaultTargets = true,
+  )
+
+  js {
     useEsModules()
     browser {
       binaries.executable()
@@ -45,5 +53,11 @@ val workerJsBundle: Provider<RegularFile> = layout.buildDirectory.file(
 artifacts {
   add(opfsWorkerJsBundle.name, workerJsBundle) {
     builtBy(workerWebpack)
+  }
+}
+
+gradleConventions {
+  kotlin {
+    explicitApiMode = ExplicitApiMode.Disabled
   }
 }

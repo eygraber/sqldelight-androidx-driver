@@ -4,7 +4,6 @@ import app.cash.sqldelight.SuspendingTransactionWithoutReturn
 import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteConfiguration
 import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteDatabaseType
 import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteDriver
-import kotlinx.coroutines.test.runTest
 import kotlin.test.AfterTest
 
 abstract class AndroidxSqliteIntegrationTest {
@@ -34,8 +33,9 @@ abstract class AndroidxSqliteIntegrationTest {
   }
 
   @AfterTest
-  fun cleanup() = runTest {
+  fun cleanup() {
     driver.close()
+    closeTestSqliteDriver()
 
     (type as? AndroidxSqliteDatabaseType.File)?.let { type ->
       val dbName = type.databaseFilePath

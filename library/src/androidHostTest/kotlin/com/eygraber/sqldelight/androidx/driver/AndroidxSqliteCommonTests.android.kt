@@ -56,6 +56,9 @@ actual class CommonQueryTest : AndroidxSqliteQueryTest()
 @RunWith(RobolectricTestRunner::class)
 actual class CommonTransacterTest : AndroidxSqliteTransacterTest()
 
+@RunWith(RobolectricTestRunner::class)
+actual class CommonTransacterThreadingTest : AndroidxSqliteTransacterThreadingTest()
+
 actual fun androidxSqliteTestDriver(): SQLiteDriver = AndroidSQLiteDriver()
 
 @Suppress("InjectDispatcher")

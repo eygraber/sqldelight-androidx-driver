@@ -23,20 +23,21 @@ internal object AndroidxSqliteUtils {
     }
   }
 
-  fun String.isPragma() = with(this) {
-    when(get(0)) {
-      'P', 'p' -> when(get(1)) {
-        'R', 'r' -> when(get(2)) {
-          'A', 'a' -> true
+  fun String.isPragma() = length >= 3 &&
+    with(this) {
+      when(get(0)) {
+        'P', 'p' -> when(get(1)) {
+          'R', 'r' -> when(get(2)) {
+            'A', 'a' -> true
+            else -> false
+          }
+
           else -> false
         }
 
         else -> false
       }
-
-      else -> false
     }
-  }
 
   /**
    * Taken from SupportSQLiteStatement.android.kt

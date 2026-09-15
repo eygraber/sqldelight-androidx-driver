@@ -19,6 +19,7 @@ actual class CommonEphemeralTest : AndroidxSqliteEphemeralTest()
 actual class CommonMigrationTest : AndroidxSqliteMigrationTest()
 actual class CommonQueryTest : AndroidxSqliteQueryTest()
 actual class CommonTransacterTest : AndroidxSqliteTransacterTest()
+actual class CommonTransacterThreadingTest : AndroidxSqliteTransacterThreadingTest()
 
 actual fun androidxSqliteTestDriver(): SQLiteDriver = BundledSQLiteDriver()
 
