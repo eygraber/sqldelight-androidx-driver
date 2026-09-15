@@ -1,6 +1,8 @@
 package com.eygraber.sqldelight.androidx.driver
 
 import androidx.sqlite.SQLiteConnection
+import androidx.sqlite.async.executeSQL
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 
@@ -29,6 +31,34 @@ internal suspend inline fun <R> ConnectionPool.withWriterConnection(
       releaseWriterConnection()
     }
   }
+}
+
+internal suspend fun SQLiteConnection.withWriterConfiguration(
+  configuration: AndroidxSqliteConfiguration,
+): SQLiteConnection {
+  try {
+    configuration.apply {
+      executeSQL("PRAGMA journal_mode = ${journalMode.value};")
+      executeSQL("PRAGMA synchronous = ${sync.value};")
+
+      // this must come after PRAGMA journal_mode while https://issuetracker.google.com/issues/447613208 is broken
+      val foreignKeys = if(isForeignKeyConstraintsEnabled) "ON" else "OFF"
+      executeSQL("PRAGMA foreign_keys = $foreignKeys;")
+    }
+  }
+  catch(c: CancellationException) {
+    throw c
+  }
+  catch(t: Throwable) {
+    try {
+      close()
+    }
+    catch(closeFailure: Throwable) {
+      t.addSuppressed(closeFailure)
+    }
+    throw t
+  }
+  return this
 }
 
 internal expect fun createDefaultConnectionPool(

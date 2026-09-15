@@ -36,26 +36,10 @@ internal class WebConnectionPool(
   // Must only be called while holding connectionMutex — createConnection and the PRAGMAs
   // suspend, so an unguarded null-check would let two coroutines create two connections.
   private suspend fun acquire(): SQLiteConnection =
-    connection ?: connectionFactory.createConnection(name).also {
-      try {
-        configuration.apply {
-          it.executeSQL("PRAGMA journal_mode = ${journalMode.value};")
-          it.executeSQL("PRAGMA synchronous = ${sync.value};")
-          val foreignKeys = if(isForeignKeyConstraintsEnabled) "ON" else "OFF"
-          it.executeSQL("PRAGMA foreign_keys = $foreignKeys;")
-        }
-      }
-      catch(t: Throwable) {
-        try {
-          it.close()
-        }
-        catch(closeFailure: Throwable) {
-          t.addSuppressed(closeFailure)
-        }
-        throw t
-      }
-      connection = it
-    }
+    connection ?: connectionFactory
+      .createConnection(name)
+      .withWriterConfiguration(configuration)
+      .also { connection = it }
 
   override suspend fun <R> runOnDispatcher(block: suspend () -> R): R = block()
 
