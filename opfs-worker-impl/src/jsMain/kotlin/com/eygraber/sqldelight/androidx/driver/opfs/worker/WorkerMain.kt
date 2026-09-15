@@ -11,6 +11,20 @@ internal fun drainQueuedDriverMessages() {
   }
 }
 
+internal fun failQueuedDriverMessages(err: dynamic) {
+  val message = errorMessage(err)
+  while(queuedDriverMessages.isNotEmpty()) {
+    val requestMsg: dynamic = queuedDriverMessages.removeAt(0).data
+    val id: dynamic = if(isObject(requestMsg)) requestMsg.id else null
+    replyError(id, message)
+  }
+}
+
+private fun errorMessage(err: dynamic): String {
+  val message: dynamic = if(isObject(err)) err.message else null
+  return if(isObject(message)) message.unsafeCast<String>() else "$err"
+}
+
 private fun routeDriverMessage(e: MessageEventLike) {
   val requestMsg: dynamic = e.data
   if(!isObject(requestMsg) || !isObject(requestMsg.data)) {
@@ -98,10 +112,8 @@ private fun onMessage(e: MessageEventLike) {
       }
       else -> {
         ensureLocalSqlite(
-          onDone = { drainQueuedDriverMessages() },
-          onError = { err ->
-            consoleErrorWith("sqldelight-androidx-opfs-worker: failed to initialize sqlite3", err)
-          },
+          onDone = ::drainQueuedDriverMessages,
+          onError = ::onLocalInitFailed,
         )
         return
       }
@@ -168,10 +180,19 @@ private fun onMessage(e: MessageEventLike) {
     if(pauseState != PauseState.Live) pausedQueue.add(e) else routeDriverMessage(e)
     return
   }
-  if(sqlite3 == null) {
+  if(poolUtil == null) {
     queuedDriverMessages.add(e)
+    ensureLocalSqlite(
+      onDone = ::drainQueuedDriverMessages,
+      onError = ::onLocalInitFailed,
+    )
   }
   else {
     routeDriverMessage(e)
   }
+}
+
+private fun onLocalInitFailed(err: dynamic) {
+  consoleErrorWith("sqldelight-androidx-opfs-worker: failed to initialize sqlite3", err)
+  failQueuedDriverMessages(err)
 }
