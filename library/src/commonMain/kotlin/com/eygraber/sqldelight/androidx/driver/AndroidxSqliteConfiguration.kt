@@ -53,6 +53,7 @@ public enum class SqliteSync(internal val value: String) {
  * — giving 3 reader connections plus the 1 writer in WAL mode, and 0 readers otherwise (since reads are blocked by
  * writes).
  * This value is ignored for [androidx.sqlite.SQLiteDriver] implementations that provide their own connection pool.
+ * On web every model resolves to one connection, and the reader count and dispatcher provider are not used.
  */
 public class AndroidxSqliteConfiguration(
   public val cacheSize: Int = 25,
