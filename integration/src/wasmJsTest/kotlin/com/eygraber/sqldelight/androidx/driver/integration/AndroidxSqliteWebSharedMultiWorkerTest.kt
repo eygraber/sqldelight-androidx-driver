@@ -12,6 +12,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
+import org.w3c.dom.Worker
 import kotlin.random.Random
 import kotlin.random.nextULong
 import kotlin.test.AfterTest
@@ -22,34 +23,28 @@ import kotlin.time.Duration.Companion.seconds
 class AndroidxSqliteWebSharedMultiWorkerTest {
   private val dbName = "integration-shared-multi-${Random.nextULong()}.db"
 
-  private val workerA = freshTestWorker(OpfsMultiTabMode.Shared)
-  private val driverA = AndroidxSqliteDriver(
-    driver = WebWorkerSQLiteDriver(workerA),
-    databaseType = AndroidxSqliteDatabaseType.File(dbName),
-    schema = AndroidXDb.Schema,
-  )
-  private val databaseA = AndroidXDb(driverA)
+  private val workerA by lazy { newTestWorker(OpfsMultiTabMode.Shared) }
+  private val databaseA by lazy { newDatabase(workerA) }
 
-  private val workerB = additionalTestWorker(OpfsMultiTabMode.Shared)
-  private val driverB = AndroidxSqliteDriver(
-    driver = WebWorkerSQLiteDriver(workerB),
-    databaseType = AndroidxSqliteDatabaseType.File(dbName),
-    schema = AndroidXDb.Schema,
+  private val workerB by lazy { newTestWorker(OpfsMultiTabMode.Shared) }
+  private val databaseB by lazy { newDatabase(workerB) }
+
+  private fun newDatabase(worker: Worker) = AndroidXDb(
+    AndroidxSqliteDriver(
+      driver = WebWorkerSQLiteDriver(worker),
+      databaseType = AndroidxSqliteDatabaseType.File(dbName),
+      schema = AndroidXDb.Schema,
+    ),
   )
-  private val databaseB = AndroidXDb(driverB)
 
   @AfterTest
-  fun cleanup() = runTest {
-    driverA.close()
-    driverB.close()
-    terminateAndSettleTestWorkers()
-    deleteFile(dbName)
-    deleteFile("$dbName-shm")
-    deleteFile("$dbName-wal")
+  fun cleanup() {
+    terminateTestWorkers()
   }
 
   @Test
   fun followerReadsRowsWrittenByLeader() = runTest {
+    awaitOpfsRelease()
     databaseA.transaction {
       databaseA.recordQueries.insert(
         userId = "shared-leader",
@@ -67,6 +62,7 @@ class AndroidxSqliteWebSharedMultiWorkerTest {
 
   @Test
   fun leaderReadsRowsWrittenByFollower() = runTest {
+    awaitOpfsRelease()
     // Force leader election to complete by routing one query through driverA first.
     databaseA.recordQueries.countForUser(whereUserId = "warmup").awaitAsOne()
 
@@ -83,6 +79,7 @@ class AndroidxSqliteWebSharedMultiWorkerTest {
 
   @Test
   fun concurrentTransactionsFromBothWorkersDoNotInterleave() = runTest(timeout = 120.seconds) {
+    awaitOpfsRelease()
     val iterations = 12
     val insertsPerTransaction = 3
     val jobs = listOf(databaseA, databaseB).map { database ->
@@ -110,6 +107,7 @@ class AndroidxSqliteWebSharedMultiWorkerTest {
 
   @Test
   fun leaderRollsBackWhenTheOwnerWorkerTerminates() = runTest(timeout = 60.seconds) {
+    awaitOpfsRelease()
     databaseA.recordQueries.countForUser(whereUserId = "warmup").awaitAsOne()
 
     val insertedByB = CompletableDeferred<Unit>()

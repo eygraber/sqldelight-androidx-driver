@@ -285,11 +285,11 @@ private fun handleSharedMessage(channel: BroadcastChannelLike, e: MessageEventLi
         val leaderChanged = knownLeaderId != leaderId
         knownLeaderId = leaderId
         isLeader = false
+        if(leaderChanged) retryPendingRequests()
         if(!acceptingDriverMessages) {
           acceptingDriverMessages = true
           drainQueuedDriverMessages()
         }
-        if(leaderChanged) retryPendingRequests()
       }
     kind == "who-is-leader" && isLeader ->
       channel.postMessage(bcLeaderChanged(tabId))

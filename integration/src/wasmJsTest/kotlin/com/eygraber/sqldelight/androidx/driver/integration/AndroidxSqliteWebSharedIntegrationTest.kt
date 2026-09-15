@@ -17,25 +17,24 @@ import kotlin.test.assertEquals
 
 class AndroidxSqliteWebSharedIntegrationTest {
   private val dbName = "integration-shared-${Random.nextULong()}.db"
-  private val worker = freshTestWorker(OpfsMultiTabMode.Shared)
-  private val driver = AndroidxSqliteDriver(
-    driver = WebWorkerSQLiteDriver(worker),
-    databaseType = AndroidxSqliteDatabaseType.File(dbName),
-    schema = AndroidXDb.Schema,
-  )
-  private val database = AndroidXDb(driver)
+  private val database by lazy {
+    AndroidXDb(
+      AndroidxSqliteDriver(
+        driver = WebWorkerSQLiteDriver(newTestWorker(OpfsMultiTabMode.Shared)),
+        databaseType = AndroidxSqliteDatabaseType.File(dbName),
+        schema = AndroidXDb.Schema,
+      ),
+    )
+  }
 
   @AfterTest
-  fun cleanup() = runTest {
-    driver.close()
-    terminateAndSettleTestWorkers()
-    deleteFile(dbName)
-    deleteFile("$dbName-shm")
-    deleteFile("$dbName-wal")
+  fun cleanup() {
+    terminateTestWorkers()
   }
 
   @Test
   fun insertedRowsAreVisibleViaSqlDelightGeneratedQueries() = runTest {
+    awaitOpfsRelease()
     database.transaction {
       database.recordQueries.insert(
         userId = "shared-1",
