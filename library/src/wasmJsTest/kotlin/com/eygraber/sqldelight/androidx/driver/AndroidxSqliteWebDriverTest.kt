@@ -6,17 +6,22 @@ import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlCursor
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.db.SqlSchema
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import kotlin.random.Random
 import kotlin.random.nextULong
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.TimeSource
 
 class AndroidxSqliteWebDriverTest {
   private val schema = object : SqlSchema<QueryResult.AsyncValue<Unit>> {
@@ -293,5 +298,34 @@ class AndroidxSqliteWebDriverTest {
     assertNull(value)
 
     driver.close()
+  }
+
+  @Test
+  fun openingAnInvalidFileNameFailsPromptly() = runTest {
+    val sqliteDriver = webTestSqliteDriver()
+    val warmUp = AndroidxSqliteDriver(
+      driver = sqliteDriver,
+      databaseType = AndroidxSqliteDatabaseType.Memory,
+      schema = schema,
+    )
+    warmUp.execute(null, "SELECT 1", 0).await()
+
+    val invalid = AndroidxSqliteDriver(
+      driver = sqliteDriver,
+      databaseType = AndroidxSqliteDatabaseType.File("x".repeat(600) + ".db"),
+      schema = schema,
+    )
+
+    val (failure, elapsed) = withContext(Dispatchers.Default) {
+      val mark = TimeSource.Monotonic.markNow()
+      val failure = runCatching { invalid.execute(null, "SELECT 1", 0).await() }.exceptionOrNull()
+      failure to mark.elapsedNow()
+    }
+
+    assertNotNull(failure)
+    assertTrue(elapsed < 300.milliseconds, "open failed after $elapsed")
+
+    warmUp.close()
+    invalid.close()
   }
 }

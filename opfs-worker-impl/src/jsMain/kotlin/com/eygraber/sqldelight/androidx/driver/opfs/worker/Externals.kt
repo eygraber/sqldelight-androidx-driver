@@ -151,6 +151,11 @@ internal fun controlPortClosedAck(controlPort: MessagePortLike) {
   js("controlPort.postMessage({ __opfsClosedAck: true })")
 }
 
+@Suppress("UnusedParameter")
+internal fun controlPortFollowerCount(controlPort: MessagePortLike, count: Int) {
+  js("controlPort.postMessage({ __opfsFollowerCount: count })")
+}
+
 internal fun isObject(value: dynamic): Boolean = js(
   """value !== null && value !== undefined""",
 )
@@ -158,8 +163,6 @@ internal fun isObject(value: dynamic): Boolean = js(
 internal fun unpauseVfs(util: dynamic): Promise<dynamic> = js(
   """Promise.resolve(util.unpauseVfs())""",
 )
-
-internal fun currentTimeMs(): Double = js("Date.now()")
 
 internal fun newJsMap(): dynamic = js("new Map()")
 
@@ -172,6 +175,12 @@ internal fun jsMapSet(map: dynamic, key: dynamic, value: dynamic) {
 internal fun jsMapDelete(map: dynamic, key: dynamic) {
   js("map.delete(key)")
 }
+
+@Suppress("UnusedParameter")
+internal fun jsMapSize(map: dynamic): Int = js("map.size")
+
+@Suppress("UnusedParameter")
+internal fun jsMapValues(map: dynamic): dynamic = js("Array.from(map.values())")
 
 internal fun jsArray(): dynamic = js("[]")
 

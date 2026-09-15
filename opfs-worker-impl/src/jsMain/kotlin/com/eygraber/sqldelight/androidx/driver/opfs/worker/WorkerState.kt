@@ -30,6 +30,7 @@ internal var nextForwardReqId = 0
 // Per-follower leader state. Values are JS objects with `databases` and `statements` JS Maps so
 // the existing leaderProcess flow can use their native get/set/delete idempotency.
 internal val followerStates = mutableMapOf<String, dynamic>()
+internal val followerWatches = mutableMapOf<String, dynamic>()
 
 internal val queuedDriverMessages = mutableListOf<MessageEventLike>()
 internal var acceptingDriverMessages = false
@@ -52,9 +53,7 @@ internal val sharedLeaderConnections = mutableMapOf<String, dynamic>()
 internal class SharedTransactionOwner(
   val followerId: String,
   val opaqueDatabaseId: dynamic,
-) {
-  var lockWatch: dynamic = null
-}
+)
 
 internal class QueuedLeaderRequest(
   val followerId: String,

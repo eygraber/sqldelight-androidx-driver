@@ -76,26 +76,3 @@ private fun installPool(attempt: Int, onDone: () -> Unit, onError: (dynamic) -> 
     },
   )
 }
-
-@Suppress("TooGenericExceptionCaught")
-internal fun openPoolDbWithRetry(fileName: String): dynamic {
-  var lastErr: dynamic = null
-  for(attempt in 0 until 6) {
-    try {
-      return newOpfsSAHPoolDb(poolUtil, fileName)
-    }
-    catch(e: Throwable) {
-      lastErr = e
-      val deadline = currentTimeMs() + (50 + attempt * 25)
-      while(currentTimeMs() < deadline) {
-        // brief spin matching the JS implementation
-      }
-    }
-  }
-  throw if(lastErr != null) {
-    lastErr.unsafeCast<Throwable>()
-  }
-  else {
-    IllegalStateException("OpfsSAHPoolDb open failed")
-  }
-}
