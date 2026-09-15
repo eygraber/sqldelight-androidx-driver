@@ -189,6 +189,10 @@ private fun onMessage(e: MessageEventLike) {
     controlPorts.add(data.__opfsControlPort.unsafeCast<MessagePortLike>())
     return
   }
+  if(isObject(data) && isObject(data.__opfsDebugFollowerCount)) {
+    controlPorts.forEach { controlPortFollowerCount(it, followerStates.size) }
+    return
+  }
   if(isObject(data) && isObject(data.__opfsClose)) {
     requestClose()
     return

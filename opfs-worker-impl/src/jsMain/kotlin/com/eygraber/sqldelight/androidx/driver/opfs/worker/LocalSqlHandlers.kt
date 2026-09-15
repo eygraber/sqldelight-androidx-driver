@@ -2,7 +2,7 @@ package com.eygraber.sqldelight.androidx.driver.opfs.worker
 
 private fun ensureLocalDbInstance(dbEntry: dynamic): dynamic {
   if(dbEntry.instance == null) {
-    dbEntry.instance = openPoolDbWithRetry(dbEntry.fileName.unsafeCast<String>())
+    dbEntry.instance = newOpfsSAHPoolDb(poolUtil, dbEntry.fileName.unsafeCast<String>())
   }
   return dbEntry.instance
 }
@@ -22,7 +22,7 @@ private fun ensureLocalStmtInstance(stmtEntry: dynamic): dynamic {
 private fun localOpen(id: dynamic, requestData: dynamic) {
   try {
     val newDatabaseId = nextDatabaseId++
-    val instance = openPoolDbWithRetry(requestData.fileName.unsafeCast<String>())
+    val instance = newOpfsSAHPoolDb(poolUtil, requestData.fileName.unsafeCast<String>())
     databases[newDatabaseId] = newDbEntry(requestData.fileName, instance)
     replyOk(id, newOpenReplyData(newDatabaseId))
   }
