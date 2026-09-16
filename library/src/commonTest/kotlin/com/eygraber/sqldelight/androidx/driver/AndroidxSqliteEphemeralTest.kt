@@ -11,6 +11,7 @@ import app.cash.sqldelight.db.SqlSchema
 import kotlinx.coroutines.test.runTest
 import kotlin.random.Random
 import kotlin.random.nextULong
+import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -20,9 +21,9 @@ import kotlin.test.assertNull
  * */
 abstract class AndroidxSqliteEphemeralTest {
   private enum class Type {
-    IN_MEMORY,
-    NAMED,
-    TEMPORARY,
+    InMemory,
+    Named,
+    Temporary,
   }
 
   private val schema = object : SqlSchema<QueryResult.AsyncValue<Unit>> {
@@ -51,12 +52,17 @@ abstract class AndroidxSqliteEphemeralTest {
 
   private val mapper = { cursor: SqlCursor ->
     TestData(
-      cursor.getLong(0)!!,
-      cursor.getString(1)!!,
+      requireNotNull(cursor.getLong(0)),
+      requireNotNull(cursor.getString(1)),
     )
   }
 
-  private inline fun withDatabase(
+  @AfterTest
+  fun closeTestDriver() {
+    closeAndroidxSqliteTestDriver()
+  }
+
+  private suspend inline fun withDatabase(
     type: Type,
     dbName: String? = null,
     deleteDbBeforeRun: Boolean = true,
@@ -65,7 +71,7 @@ abstract class AndroidxSqliteEphemeralTest {
   ) {
     val fullDbName = when(dbName) {
       null -> null
-      else -> "${this::class.qualifiedName.orEmpty()}.$dbName.db"
+      else -> "${this::class.simpleName.orEmpty()}.$dbName.db"
     }
 
     if(fullDbName != null && deleteDbBeforeRun) {
@@ -76,14 +82,14 @@ abstract class AndroidxSqliteEphemeralTest {
 
     val result = runCatching {
       when(type) {
-        Type.IN_MEMORY -> AndroidxSqliteDriver(androidxSqliteTestDriver(), AndroidxSqliteDatabaseType.Memory, schema)
-        Type.NAMED -> AndroidxSqliteDriver(
+        Type.InMemory -> AndroidxSqliteDriver(androidxSqliteTestDriver(), AndroidxSqliteDatabaseType.Memory, schema)
+        Type.Named -> AndroidxSqliteDriver(
           androidxSqliteTestDriver(),
           AndroidxSqliteDatabaseType.File(requireNotNull(fullDbName)),
           schema,
         )
 
-        Type.TEMPORARY -> AndroidxSqliteDriver(androidxSqliteTestDriver(), AndroidxSqliteDatabaseType.Temporary, schema)
+        Type.Temporary -> AndroidxSqliteDriver(androidxSqliteTestDriver(), AndroidxSqliteDatabaseType.Temporary, schema)
       }.test()
     }
 
@@ -99,12 +105,12 @@ abstract class AndroidxSqliteEphemeralTest {
   @Test
   fun inMemoryCreatesIndependentDatabase() = runTest {
     val data1 = TestData(1, "val1")
-    withDatabase(Type.IN_MEMORY) {
+    withDatabase(Type.InMemory) {
       val driver1 = this
       driver1.insertTestData(data1)
       assertEquals(data1, driver1.testDataQuery().awaitAsOne())
 
-      withDatabase(Type.IN_MEMORY) {
+      withDatabase(Type.InMemory) {
         val driver2 = this
         assertNull(driver2.testDataQuery().awaitAsOneOrNull())
         driver1.close()
@@ -116,12 +122,12 @@ abstract class AndroidxSqliteEphemeralTest {
   @Test
   fun temporaryCreatesIndependentDatabase() = runTest {
     val data1 = TestData(1, "val1")
-    withDatabase(Type.TEMPORARY) {
+    withDatabase(Type.Temporary) {
       val driver1 = this
       driver1.insertTestData(data1)
       assertEquals(data1, driver1.testDataQuery().awaitAsOne())
 
-      withDatabase(Type.TEMPORARY) {
+      withDatabase(Type.Temporary) {
         val driver2 = this
         assertNull(driver2.testDataQuery().awaitAsOneOrNull())
         driver1.close()
@@ -136,7 +142,7 @@ abstract class AndroidxSqliteEphemeralTest {
 
     val data1 = TestData(1, "val1")
     withDatabase(
-      type = Type.NAMED,
+      type = Type.Named,
       dbName = dbName,
     ) {
       val driver1 = this
@@ -145,7 +151,7 @@ abstract class AndroidxSqliteEphemeralTest {
       assertEquals(data1, driver1.testDataQuery().awaitAsOne())
 
       withDatabase(
-        type = Type.NAMED,
+        type = Type.Named,
         dbName = dbName,
         deleteDbBeforeRun = false,
       ) {
@@ -157,7 +163,7 @@ abstract class AndroidxSqliteEphemeralTest {
         driver2.close()
 
         withDatabase(
-          type = Type.NAMED,
+          type = Type.Named,
           dbName = dbName,
           deleteDbBeforeRun = false,
         ) {

@@ -1,3 +1,6 @@
+import org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi
+import org.jetbrains.kotlin.gradle.ExperimentalWasmDsl
+
 plugins {
   id("com.android.lint")
   id("com.eygraber.conventions-kotlin-multiplatform")
@@ -9,10 +12,39 @@ plugins {
 kotlin {
   defaultKmpTargets(
     project = project,
+    webOptions = KmpTarget.WebOptions(
+      isNodeEnabled = false,
+      isBrowserEnabled = true,
+      isBrowserEnabledForLibraryTests = true,
+    ),
     androidNamespace = "com.eygraber.sqldelight.androidx.driver",
   )
 
-  androidLibrary {
+  @OptIn(ExperimentalWasmDsl::class)
+  wasmJs {
+    browser {
+      testTask {
+        useKarma {
+          // ChromeHeadlessNoSandbox so the browser starts under restricted CI runners
+          // (the default chrome-headless launcher fails to start on GitHub-hosted Linux
+          // runners without --no-sandbox).
+          useChromeHeadlessNoSandbox()
+        }
+      }
+    }
+  }
+
+  js {
+    browser {
+      testTask {
+        useKarma {
+          useChromeHeadlessNoSandbox()
+        }
+      }
+    }
+  }
+
+  android {
     withHostTest {}
 
     withDeviceTest {
@@ -26,6 +58,19 @@ kotlin {
             testedAbi = "x86_64"
             systemImageSource = "aosp-atd"
           }
+        }
+      }
+    }
+  }
+
+  @OptIn(ExperimentalKotlinGradlePluginApi::class)
+  applyDefaultHierarchyTemplate {
+    common {
+      group("nonWeb") {
+        withCompilations { it.target.targetName == "android" }
+        withJvm()
+        group("native") {
+          withNative()
         }
       }
     }
@@ -55,6 +100,7 @@ kotlin {
       implementation(libs.androidx.collections)
 
       api(libs.androidx.sqlite)
+      api(libs.androidx.sqliteAsync)
       api(libs.cashapp.sqldelight.runtime)
       api(libs.kotlinx.coroutines.core)
 
@@ -78,6 +124,12 @@ kotlin {
     nativeTest.dependencies {
       implementation(libs.androidx.sqliteBundled)
       implementation(libs.okio)
+    }
+
+    named("webTest").dependencies {
+      implementation(projects.opfsDriver)
+      implementation(libs.androidx.sqliteWeb)
+      implementation(libs.kotlinx.browser)
     }
   }
 }

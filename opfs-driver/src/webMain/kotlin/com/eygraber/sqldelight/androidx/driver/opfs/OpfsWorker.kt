@@ -1,0 +1,160 @@
+package com.eygraber.sqldelight.androidx.driver.opfs
+
+import org.w3c.dom.Worker
+
+/**
+ * The current cross-tab status of an [opfsWorker]. Reported via the optional
+ * `onLockStateChange` callback so an app can show a "another window is using the database"
+ * indicator (or queue user-driven actions) instead of presenting suspended queries as a hang.
+ */
+public enum class OpfsLockState {
+  /** This worker can serve queries. */
+  Live,
+
+  /** Another tab or window is currently using the database. Queries from this worker are queued
+   *  until the database becomes available again. */
+  Paused,
+}
+
+/**
+ * Strategy for sharing an OPFS-backed database across multiple tabs of the same origin.
+ *
+ * Browsers don't allow more than one connection to an OPFS database at a time, so when an app is
+ * opened in two tabs, the tabs need to coordinate access. This enum picks the coordination
+ * strategy.
+ */
+public enum class OpfsMultiTabMode {
+  /**
+   * Only one tab can use the database at a time. Opening the app in a second tab while the
+   * first is still open will fail. Use only if your app is guaranteed to run in a single tab.
+   */
+  Single,
+
+  /**
+   * Tabs share the database one-at-a-time: the active tab uses the database, and tabs that go
+   * into the background pause access and queue their queries until they regain focus. Adds no
+   * per-query overhead. The trade-off is that a backgrounded tab cannot run queries until it's
+   * brought back to the foreground — a tab opened in a separate window that doesn't yet have
+   * focus will appear frozen if it tries to run startup queries. The default.
+   */
+  PauseOnHidden,
+
+  /**
+   * All tabs can run queries concurrently. One tab is automatically elected as the database
+   * owner and serves queries on behalf of the others; ownership transfers automatically when
+   * the owning tab closes. Works regardless of which tabs have focus.
+   *
+   * Trade-offs: queries from non-owner tabs incur a cross-tab message round-trip, and in-flight
+   * transactions on the owner tab are not preserved if it closes mid-transaction (the new owner
+   * starts with fresh connections).
+   *
+   * A transaction gives its tab exclusive use of the database file until the transaction ends.
+   * Requests from other tabs for that file wait in arrival order. If the tab in a transaction
+   * closes, the owner rolls the transaction back and serves the queued requests.
+   *
+   * Ownership transfer is at-least-once: requests that never received a response from the old
+   * owner are retried against the new one. If the old owner executed a write but closed before
+   * responding, the retry executes that write a second time. Statements whose duplicate
+   * execution matters should be written idempotently (e.g. `INSERT OR IGNORE`, explicit
+   * primary keys, or upserts).
+   */
+  Shared,
+
+  ;
+
+  public companion object {
+    public val Default: OpfsMultiTabMode = PauseOnHidden
+  }
+}
+
+/**
+ * A running OPFS worker and its multi-tab orchestration. [close] releases the OPFS handles,
+ * the Web Locks, the channels, and the listeners, then terminates [worker]. Close all
+ * connections opened through [worker] first. [close] is idempotent.
+ */
+public class OpfsWorker internal constructor(
+  private val handle: WorkerHandle,
+  private val orchestrator: PauseOnHiddenOrchestrator?,
+) : AutoCloseable {
+  public val worker: Worker get() = handle.worker
+
+  public var isClosed: Boolean = false
+    private set
+
+  private var closeTimer: Int? = null
+
+  override fun close() {
+    if(isClosed) return
+    isClosed = true
+    orchestrator?.detach()
+    handle.onClosedAck = ::terminate
+    closeTimer = scheduleTimeout(CLOSE_ACK_TIMEOUT_MS) { terminate() }
+    postOpfsClose(handle.worker)
+  }
+
+  private fun terminate() {
+    closeTimer?.let(::cancelTimeout)
+    closeTimer = null
+    handle.onClosedAck = {}
+    orchestrator?.releaseLock()
+    closeMessagePort(handle.controlPort)
+    handle.worker.terminate()
+  }
+}
+
+private const val CLOSE_ACK_TIMEOUT_MS = 10_000
+
+/**
+ * Returns an [OpfsWorker] whose [OpfsWorker.worker] bridges `androidx.sqlite`'s
+ * `WebWorkerSQLiteDriver` protocol to `@sqlite.org/sqlite-wasm`'s OPFS VFS. Database files
+ * referenced by `AndroidxSqliteDatabaseType.File("name.db")` are persisted in the browser's
+ * Origin Private File System.
+ *
+ * Prefer [androidxSqliteOpfsDriver], which wraps the worker in a closable `SQLiteDriver`. Use
+ * this function when you construct [androidx.sqlite.driver.web.WebWorkerSQLiteDriver] yourself:
+ *
+ * ```kotlin
+ * val opfsWorker = opfsWorker()
+ * val driver = AndroidxSqliteDriver(
+ *   driver = WebWorkerSQLiteDriver(opfsWorker.worker),
+ *   databaseType = AndroidxSqliteDatabaseType.File("music.db"),
+ *   schema = MusicDatabase.Schema,
+ * )
+ * // later, after driver.close():
+ * opfsWorker.close()
+ * ```
+ *
+ * The worker source is embedded as a string and instantiated from a `Blob` URL, so consumers
+ * don't need to copy any JS resource into their bundle. URLs for sqlite-wasm's `index.mjs` and
+ * `sqlite3.wasm` are resolved via webpack's `new URL(..., import.meta.url)` syntax against the
+ * transitive `@sqlite.org/sqlite-wasm` npm dep, then handed to the worker so it can dynamic-import
+ * sqlite3 and override `locateFile` for the wasm companion.
+ *
+ * @param multiTabMode strategy to share the database across multiple tabs of the same origin.
+ *   Defaults to [OpfsMultiTabMode.PauseOnHidden], where only the visible tab runs queries and
+ *   backgrounded tabs queue theirs. See the enum entries for the trade-offs of each mode.
+ * @param onLockStateChange optional callback invoked on the main thread when this worker
+ *   changes between [OpfsLockState.Live] and [OpfsLockState.Paused]. It fires once
+ *   synchronously with the initial state during this call. In `PauseOnHidden` mode, Live fires
+ *   after the worker confirms it can serve queries, and Paused fires after the worker confirms
+ *   it released the database. It does not fire after [OpfsWorker.close]. Use it to show an
+ *   indicator when another tab or window uses the database.
+ */
+public fun opfsWorker(
+  multiTabMode: OpfsMultiTabMode = OpfsMultiTabMode.Default,
+  onLockStateChange: ((OpfsLockState) -> Unit)? = null,
+): OpfsWorker {
+  val handle = buildOpfsWorker(multiTabMode)
+  val onLive = onLockStateChange?.let { cb -> { cb(OpfsLockState.Live) } } ?: {}
+  val onPaused = onLockStateChange?.let { cb -> { cb(OpfsLockState.Paused) } } ?: {}
+  val orchestrator = if(multiTabMode == OpfsMultiTabMode.PauseOnHidden) {
+    startPauseOnHiddenOrchestration(handle, onLive, onPaused)
+  }
+  else {
+    // Single and Shared never voluntarily pause from the consumer's perspective — emit Live
+    // once so consumers can write a uniform `state == Live` predicate without a mode check.
+    onLive()
+    null
+  }
+  return OpfsWorker(handle, orchestrator)
+}

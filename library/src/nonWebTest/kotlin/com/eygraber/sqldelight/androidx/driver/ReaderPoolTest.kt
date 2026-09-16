@@ -619,7 +619,7 @@ private class ReaderPoolReaderPoolTestConnectionFactory : AndroidxSqliteConnecti
     override fun open(fileName: String): SQLiteConnection = ReaderPoolTestConnection()
   }
 
-  override fun createConnection(name: String): SQLiteConnection {
+  override suspend fun createConnection(name: String): SQLiteConnection {
     val connection = ReaderPoolTestConnection()
     createdConnections.add(connection)
     return connection
@@ -633,7 +633,7 @@ private class FailingReaderPoolConnectionFactory(
     override fun open(fileName: String): SQLiteConnection = ReaderPoolTestConnection()
   }
 
-  override fun createConnection(name: String): SQLiteConnection {
+  override suspend fun createConnection(name: String): SQLiteConnection {
     if(failuresBeforeSuccess > 0) {
       failuresBeforeSuccess--
       error("open failed")

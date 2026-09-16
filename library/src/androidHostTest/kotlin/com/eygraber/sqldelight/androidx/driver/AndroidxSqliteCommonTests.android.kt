@@ -56,12 +56,15 @@ actual class CommonQueryTest : AndroidxSqliteQueryTest()
 @RunWith(RobolectricTestRunner::class)
 actual class CommonTransacterTest : AndroidxSqliteTransacterTest()
 
+@RunWith(RobolectricTestRunner::class)
+actual class CommonTransacterThreadingTest : AndroidxSqliteTransacterThreadingTest()
+
 actual fun androidxSqliteTestDriver(): SQLiteDriver = AndroidSQLiteDriver()
 
 @Suppress("InjectDispatcher")
 actual val IoDispatcher: CoroutineDispatcher get() = Dispatchers.IO
 
-actual fun deleteFile(name: String) {
+actual suspend fun deleteFile(name: String) {
   File(name).delete()
 }
 

@@ -282,7 +282,7 @@ class AndroidxDriverConnectionPoolSetJournalModeTest {
   }
 
   @Test
-  fun testAndroidxConnectionPoolSetJournalModeWithTimeout() {
+  fun testAndroidxConnectionPoolSetJournalModeWithTimeout() = runTest {
     val factory = TestConnectionFactory()
     val config = AndroidxSqliteConfiguration(
       concurrencyModel = MultipleReadersSingleWriter(isWal = false),
@@ -470,7 +470,7 @@ private class TestConnectionFactory : AndroidxSqliteConnectionFactory {
   }
   val createdConnections = mutableListOf<TestConnection>()
 
-  override fun createConnection(name: String): SQLiteConnection {
+  override suspend fun createConnection(name: String): SQLiteConnection {
     val connection = TestConnection().apply {
       setPragmaResult("PRAGMA foreign_keys;", false) // Default: foreign keys disabled
     }

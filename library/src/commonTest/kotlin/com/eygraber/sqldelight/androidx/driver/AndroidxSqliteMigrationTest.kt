@@ -4,9 +4,12 @@ import app.cash.sqldelight.db.AfterVersion
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.db.SqlSchema
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import kotlin.random.Random
 import kotlin.random.nextULong
+import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
@@ -104,7 +107,12 @@ abstract class AndroidxSqliteMigrationTest {
     }
   }
 
-  private inline fun withDatabase(
+  @AfterTest
+  fun closeTestDriver() {
+    closeAndroidxSqliteTestDriver()
+  }
+
+  private suspend inline fun withDatabase(
     schema: SqlSchema<QueryResult.AsyncValue<Unit>>,
     dbName: String,
     noinline onCreate: suspend SqlDriver.() -> Unit,
@@ -121,7 +129,7 @@ abstract class AndroidxSqliteMigrationTest {
     migrateEmptySchema: Boolean = false,
     test: SqlDriver.() -> Unit,
   ) {
-    val fullDbName = "${this::class.qualifiedName.orEmpty()}.$dbName.db"
+    val fullDbName = "${this::class.simpleName.orEmpty()}.$dbName.db"
 
     if(deleteDbBeforeRun) {
       deleteFile(fullDbName)
@@ -177,11 +185,8 @@ abstract class AndroidxSqliteMigrationTest {
         identifier = null,
         sql = "SELECT COUNT(*) FROM post",
         mapper = { cursor ->
-          if(cursor.next().value) {
-            QueryResult.Value(cursor.getLong(0))
-          }
-          else {
-            QueryResult.Value(null)
+          QueryResult.AsyncValue {
+            if(cursor.next().await()) cursor.getLong(0) else null
           }
         },
         parameters = 0,
@@ -204,11 +209,8 @@ abstract class AndroidxSqliteMigrationTest {
         identifier = null,
         sql = "SELECT COUNT(*) FROM post",
         mapper = { cursor ->
-          if(cursor.next().value) {
-            QueryResult.Value(cursor.getLong(0))
-          }
-          else {
-            QueryResult.Value(null)
+          QueryResult.AsyncValue {
+            if(cursor.next().await()) cursor.getLong(0) else null
           }
         },
         parameters = 0,
@@ -226,12 +228,12 @@ abstract class AndroidxSqliteMigrationTest {
           identifier = null,
           sql = "PRAGMA foreign_keys;",
           mapper = { cursor ->
-            QueryResult.Value(
+            QueryResult.AsyncValue {
               when {
-                cursor.next().value -> cursor.getLong(0)
+                cursor.next().await() -> cursor.getLong(0)
                 else -> 0L
-              },
-            )
+              }
+            }
           },
           parameters = 0,
         ).await() == 0L
@@ -254,11 +256,8 @@ abstract class AndroidxSqliteMigrationTest {
         identifier = null,
         sql = "SELECT COUNT(*) FROM post",
         mapper = { cursor ->
-          if(cursor.next().value) {
-            QueryResult.Value(cursor.getLong(0))
-          }
-          else {
-            QueryResult.Value(null)
+          QueryResult.AsyncValue {
+            if(cursor.next().await()) cursor.getLong(0) else null
           }
         },
         parameters = 0,
@@ -305,11 +304,8 @@ abstract class AndroidxSqliteMigrationTest {
         identifier = null,
         sql = "SELECT COUNT(*) FROM post",
         mapper = { cursor ->
-          if(cursor.next().value) {
-            QueryResult.Value(cursor.getLong(0))
-          }
-          else {
-            QueryResult.Value(null)
+          QueryResult.AsyncValue {
+            if(cursor.next().await()) cursor.getLong(0) else null
           }
         },
         parameters = 0,
@@ -333,12 +329,12 @@ abstract class AndroidxSqliteMigrationTest {
           identifier = null,
           sql = "PRAGMA foreign_keys;",
           mapper = { cursor ->
-            QueryResult.Value(
+            QueryResult.AsyncValue {
               when {
-                cursor.next().value -> cursor.getLong(0)
+                cursor.next().await() -> cursor.getLong(0)
                 else -> 0L
-              },
-            )
+              }
+            }
           },
           parameters = 0,
         ).await() == 1L
@@ -948,7 +944,7 @@ abstract class AndroidxSqliteMigrationTest {
   fun `migration callbacks can do db work without deadlocking`() = runTest {
     val schema = getCallbackInvokingSchema()
     val dbName = Random.nextULong().toHexString()
-    val fullDbName = "${this::class.qualifiedName.orEmpty()}.$dbName.db"
+    val fullDbName = "${this::class.simpleName.orEmpty()}.$dbName.db"
 
     deleteFile(fullDbName)
     deleteFile("$fullDbName-shm")
@@ -988,7 +984,7 @@ abstract class AndroidxSqliteMigrationTest {
           identifier = null,
           sql = "SELECT version FROM marker WHERE version = 99",
           mapper = { cursor ->
-            QueryResult.Value(if(cursor.next().value) cursor.getLong(0) else null)
+            QueryResult.AsyncValue { if(cursor.next().await()) cursor.getLong(0) else null }
           },
           parameters = 0,
         ).await()
@@ -998,9 +994,11 @@ abstract class AndroidxSqliteMigrationTest {
       assertTrue(callbackRan)
     }
     finally {
-      deleteFile(fullDbName)
-      deleteFile("$fullDbName-shm")
-      deleteFile("$fullDbName-wal")
+      withContext(NonCancellable) {
+        deleteFile(fullDbName)
+        deleteFile("$fullDbName-shm")
+        deleteFile("$fullDbName-wal")
+      }
     }
   }
 
@@ -1008,7 +1006,7 @@ abstract class AndroidxSqliteMigrationTest {
   fun `migration callback throwing rolls back the migration`() = runTest {
     val schema = getCallbackInvokingSchema()
     val dbName = Random.nextULong().toHexString()
-    val fullDbName = "${this::class.qualifiedName.orEmpty()}.$dbName.db"
+    val fullDbName = "${this::class.simpleName.orEmpty()}.$dbName.db"
 
     deleteFile(fullDbName)
     deleteFile("$fullDbName-shm")
@@ -1058,7 +1056,7 @@ abstract class AndroidxSqliteMigrationTest {
           identifier = null,
           sql = "PRAGMA user_version;",
           mapper = { cursor ->
-            QueryResult.Value(if(cursor.next().value) cursor.getLong(0) else 0L)
+            QueryResult.AsyncValue { if(cursor.next().await()) cursor.getLong(0) else 0L }
           },
           parameters = 0,
         ).await()
@@ -1068,7 +1066,7 @@ abstract class AndroidxSqliteMigrationTest {
           identifier = null,
           sql = "SELECT COUNT(*) FROM marker WHERE version = 99",
           mapper = { cursor ->
-            QueryResult.Value(if(cursor.next().value) cursor.getLong(0) else 0L)
+            QueryResult.AsyncValue { if(cursor.next().await()) cursor.getLong(0) else 0L }
           },
           parameters = 0,
         ).await()
@@ -1077,9 +1075,11 @@ abstract class AndroidxSqliteMigrationTest {
       }
     }
     finally {
-      deleteFile(fullDbName)
-      deleteFile("$fullDbName-shm")
-      deleteFile("$fullDbName-wal")
+      withContext(NonCancellable) {
+        deleteFile(fullDbName)
+        deleteFile("$fullDbName-shm")
+        deleteFile("$fullDbName-wal")
+      }
     }
   }
 
@@ -1088,7 +1088,7 @@ abstract class AndroidxSqliteMigrationTest {
     val schema = getCallbackInvokingSchema()
 
     val dbName = Random.nextULong().toHexString()
-    val fullDbName = "${this::class.qualifiedName.orEmpty()}.$dbName.db"
+    val fullDbName = "${this::class.simpleName.orEmpty()}.$dbName.db"
 
     deleteFile(fullDbName)
     deleteFile("$fullDbName-shm")
@@ -1126,7 +1126,7 @@ abstract class AndroidxSqliteMigrationTest {
           sql = "SELECT version FROM marker ORDER BY version",
           mapper = { cursor ->
             QueryResult.AsyncValue {
-              while(cursor.next().value) versions += cursor.getLong(0)!!
+              while(cursor.next().await()) versions += checkNotNull(cursor.getLong(0))
             }
           },
           parameters = 0,
@@ -1136,9 +1136,11 @@ abstract class AndroidxSqliteMigrationTest {
       }
     }
     finally {
-      deleteFile(fullDbName)
-      deleteFile("$fullDbName-shm")
-      deleteFile("$fullDbName-wal")
+      withContext(NonCancellable) {
+        deleteFile(fullDbName)
+        deleteFile("$fullDbName-shm")
+        deleteFile("$fullDbName-wal")
+      }
     }
   }
 }

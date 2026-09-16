@@ -7,6 +7,7 @@ import app.cash.sqldelight.db.SqlSchema
 import kotlinx.coroutines.test.runTest
 import kotlin.random.Random
 import kotlin.random.nextULong
+import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
@@ -104,7 +105,12 @@ abstract class AndroidxSqliteCreationTest {
     ) = QueryResult.AsyncValue {}
   }
 
-  private inline fun withDatabase(
+  @AfterTest
+  fun closeTestDriver() {
+    closeAndroidxSqliteTestDriver()
+  }
+
+  private suspend inline fun withDatabase(
     schema: SqlSchema<QueryResult.AsyncValue<Unit>>,
     dbName: String,
     noinline onCreate: suspend SqlDriver.() -> Unit,
@@ -121,7 +127,7 @@ abstract class AndroidxSqliteCreationTest {
     migrateEmptySchema: Boolean = false,
     test: SqlDriver.() -> Unit,
   ) {
-    val fullDbName = "${this::class.qualifiedName.orEmpty()}.$dbName.db"
+    val fullDbName = "${this::class.simpleName.orEmpty()}.$dbName.db"
 
     if(deleteDbBeforeRun) {
       deleteFile(fullDbName)
@@ -175,11 +181,8 @@ abstract class AndroidxSqliteCreationTest {
         identifier = null,
         sql = "SELECT COUNT(*) FROM post",
         mapper = { cursor ->
-          if(cursor.next().value) {
-            QueryResult.Value(cursor.getLong(0))
-          }
-          else {
-            QueryResult.Value(null)
+          QueryResult.AsyncValue {
+            if(cursor.next().await()) cursor.getLong(0) else null
           }
         },
         parameters = 0,
@@ -197,12 +200,12 @@ abstract class AndroidxSqliteCreationTest {
           identifier = null,
           sql = "PRAGMA foreign_keys;",
           mapper = { cursor ->
-            QueryResult.Value(
+            QueryResult.AsyncValue {
               when {
-                cursor.next().value -> cursor.getLong(0)
+                cursor.next().await() -> cursor.getLong(0)
                 else -> 0L
-              },
-            )
+              }
+            }
           },
           parameters = 0,
         ).await() == 0L
@@ -241,12 +244,12 @@ abstract class AndroidxSqliteCreationTest {
           identifier = null,
           sql = "PRAGMA foreign_keys;",
           mapper = { cursor ->
-            QueryResult.Value(
+            QueryResult.AsyncValue {
               when {
-                cursor.next().value -> cursor.getLong(0)
+                cursor.next().await() -> cursor.getLong(0)
                 else -> 0L
-              },
-            )
+              }
+            }
           },
           parameters = 0,
         ).await() == 1L

@@ -27,7 +27,7 @@ import kotlinx.atomicfu.locks.withLock
  * @see SqlSchema.migrate
  */
 public class AndroidxSqliteDriver @VisibleForTesting(otherwise = PRIVATE) internal constructor(
-  connectionFactory: AndroidxSqliteConnectionFactory,
+  private val connectionFactory: AndroidxSqliteConnectionFactory,
   databaseType: AndroidxSqliteDatabaseType,
   private val schema: SqlSchema<QueryResult.AsyncValue<Unit>>,
   configuration: AndroidxSqliteConfiguration = AndroidxSqliteConfiguration(),
@@ -90,14 +90,14 @@ public class AndroidxSqliteDriver @VisibleForTesting(otherwise = PRIVATE) intern
 
     overridingConnectionPool ?: when {
       connectionFactory.driver.hasConnectionPool ->
-        PassthroughConnectionPool(
+        createPassthroughConnectionPool(
           connectionFactory = connectionFactory,
           nameProvider = nameProvider,
           configuration = configuration,
         )
 
       else ->
-        AndroidxDriverConnectionPool(
+        createDefaultConnectionPool(
           connectionFactory = connectionFactory,
           nameProvider = nameProvider,
           isFileBased = when(databaseType) {
@@ -314,10 +314,13 @@ public class AndroidxSqliteDriver @VisibleForTesting(otherwise = PRIVATE) intern
   }
 
   /**
-   * It is the caller's responsibility to ensure that no threads
+   * Closes all connections in the pool and clears the statement cache.
+   * On web it then closes the [SQLiteDriver] when that driver is closable.
+   *
+   * It is the caller's responsibility to ensure that no other coroutines
    * are using any of the connections starting from when close is invoked.
    *
-   * An [IllegalStateException] may be thrown if there are threads using any of the connections.
+   * An [IllegalStateException] may be thrown if there are coroutines using any of the connections.
    */
   override fun close() {
     statementsCacheLock.withLock {
@@ -325,6 +328,7 @@ public class AndroidxSqliteDriver @VisibleForTesting(otherwise = PRIVATE) intern
       statementsCache.clear()
     }
     connectionPool.close()
+    closeSqliteDriver(connectionFactory.driver)
   }
 
   public data class ForeignKeyConstraintViolation(
