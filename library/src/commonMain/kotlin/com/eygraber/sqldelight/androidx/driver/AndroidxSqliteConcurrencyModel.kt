@@ -1,16 +1,10 @@
-@file:Suppress("UnusedImport") // https://github.com/detekt/detekt/issues/9269
-
 package com.eygraber.sqldelight.androidx.driver
 
 import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteConcurrencyModel.Companion.CpuCacheHitOptimizedProvider
 import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteConcurrencyModel.Companion.memoryOptimizedProvider
 import kotlinx.coroutines.CloseableCoroutineDispatcher
 import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.DelicateCoroutinesApi
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.IO
-import kotlinx.coroutines.newFixedThreadPoolContext
 
 /**
  * Defines the concurrency model for SQLite database connections, controlling how many
@@ -25,8 +19,11 @@ import kotlinx.coroutines.newFixedThreadPoolContext
  * The underlying thread will be blocked for the duration of any database operation
  * (including the entire transaction for explicit transactions).
  *
- * Defaults to the value provided by [memoryOptimizedProvider], but if you want to optimize for CPU cache hits,
- * you can use [CpuCacheHitOptimizedProvider].
+ * Defaults to the value provided by [memoryOptimizedProvider]. Use [CpuCacheHitOptimizedProvider]
+ * to pin each connection to its own thread.
+ *
+ * On web the driver uses one connection for every model. It does not use [readerCount]
+ * or the dispatcher provider there.
  *
  * @property readerCount The number of reader connections to maintain in the pool
  */
@@ -39,16 +36,16 @@ public sealed class AndroidxSqliteConcurrencyModel {
   public companion object {
     public const val DISPATCHER_NAME: String = "AndroidxSqliteDriver"
 
-    @OptIn(DelicateCoroutinesApi::class, ExperimentalCoroutinesApi::class)
-    public val CpuCacheHitOptimizedProvider: (Int, String) -> CoroutineDispatcher = { parallelism, name ->
-      newFixedThreadPoolContext(
-        nThreads = parallelism,
-        name = name,
-      )
-    }
+    /**
+     * A provider that creates a fixed thread pool sized to the requested parallelism.
+     * It is not available on web. Access to it throws [UnsupportedOperationException] there.
+     */
+    public val CpuCacheHitOptimizedProvider: (Int, String) -> CoroutineDispatcher
+      get() = cpuCacheHitOptimizedProvider()
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     public fun memoryOptimizedProvider(
-      dispatcher: CoroutineDispatcher = Dispatchers.IO,
+      dispatcher: CoroutineDispatcher = defaultIoDispatcher(),
     ): (Int, String) -> CoroutineDispatcher = { parallelism, name ->
       dispatcher.limitedParallelism(
         parallelism = parallelism,
@@ -200,3 +197,7 @@ public sealed class AndroidxSqliteConcurrencyModel {
     }
   }
 }
+
+internal expect fun defaultIoDispatcher(): CoroutineDispatcher
+
+internal expect fun cpuCacheHitOptimizedProvider(): (Int, String) -> CoroutineDispatcher

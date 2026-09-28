@@ -23,8 +23,7 @@ internal class ReaderPool(
   private val onConnectionClosed: (SQLiteConnection) -> Unit = {},
 ) {
   private data class ReaderEntry(
-    val isCreated: Boolean,
-    val connection: Lazy<SQLiteConnection>,
+    val connection: SQLiteConnection?,
   )
 
   // onUndeliveredElement: a receiver cancelled at the same instant a send resumes it (prompt
@@ -35,16 +34,8 @@ internal class ReaderPool(
   private val channel: Channel<ReaderEntry> = Channel(
     capacity = Channel.UNLIMITED,
     onUndeliveredElement = { entry ->
-      if(channel.trySend(entry).isFailure && entry.isCreated) {
-        val connection = entry.connection.value
-        try {
-          connection.close()
-        }
-        catch(_: Throwable) {}
-        try {
-          onConnectionClosed(connection)
-        }
-        catch(_: Throwable) {}
+      if(channel.trySend(entry).isFailure) {
+        entry.connection?.let(::closeQuietly)
       }
     },
   )
@@ -72,12 +63,7 @@ internal class ReaderPool(
   fun populate(newCapacity: Int) {
     capacity = newCapacity
     repeat(newCapacity) {
-      channel.trySend(
-        ReaderEntry(
-          isCreated = false,
-          connection = lazy { connectionFactory.createConnection(name()) },
-        ),
-      )
+      channel.trySend(ReaderEntry(connection = null))
     }
   }
 
@@ -136,32 +122,28 @@ internal class ReaderPool(
   }
 
   /**
-   * Materializes a received entry's lazy connection. If creation fails, a fresh unopened lazy
+   * Opens a received entry's connection when it has none yet. If creation fails, a fresh unopened
    * entry is put back into the channel so a future acquire can retry — without this, a transient
    * open failure would permanently shrink capacity and a later swap's drain would block waiting
    * for a slot that never comes back.
    */
   private suspend fun materializeOrReturn(entry: ReaderEntry): SQLiteConnection =
+    entry.connection ?: createReader()
+
+  private suspend fun createReader(): SQLiteConnection {
+    var created = false
     try {
-      entry.connection.value
+      val connection = connectionFactory.createConnection(name())
+      created = true
+      return connection
     }
-    catch(t: Throwable) {
-      channel.send(
-        ReaderEntry(
-          isCreated = false,
-          connection = lazy { connectionFactory.createConnection(name()) },
-        ),
-      )
-      throw t
+    finally {
+      if(!created) channel.trySend(ReaderEntry(connection = null))
     }
+  }
 
   suspend fun release(connection: SQLiteConnection) {
-    channel.send(
-      ReaderEntry(
-        isCreated = true,
-        connection = lazy { connection },
-      ),
-    )
+    channel.send(ReaderEntry(connection = connection))
   }
 
   /**
@@ -187,18 +169,7 @@ internal class ReaderPool(
       // could hand out stale, pre-swap connections.
       withContext(NonCancellable) {
         repeat(priorCapacity) {
-          val reader = channel.receive()
-          if(reader.isCreated) {
-            val connection = reader.connection.value
-            try {
-              connection.close()
-            }
-            catch(_: Throwable) {}
-            try {
-              onConnectionClosed(connection)
-            }
-            catch(_: Throwable) {}
-          }
+          channel.receive().connection?.let(::closeQuietly)
         }
         capacity = 0
       }
@@ -232,19 +203,20 @@ internal class ReaderPool(
     while(true) {
       val reader = channel.tryReceive().getOrNull() ?: break
       drained++
-      if(reader.isCreated) {
-        val connection = reader.connection.value
-        try {
-          connection.close()
-        }
-        catch(_: Throwable) {}
-        try {
-          onConnectionClosed(connection)
-        }
-        catch(_: Throwable) {}
-      }
+      reader.connection?.let(::closeQuietly)
     }
     channel.close()
     return drained
+  }
+
+  private fun closeQuietly(connection: SQLiteConnection) {
+    try {
+      connection.close()
+    }
+    catch(_: Throwable) {}
+    try {
+      onConnectionClosed(connection)
+    }
+    catch(_: Throwable) {}
   }
 }

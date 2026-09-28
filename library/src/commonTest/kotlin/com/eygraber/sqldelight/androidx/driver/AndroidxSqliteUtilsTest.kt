@@ -2,7 +2,6 @@ package com.eygraber.sqldelight.androidx.driver
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -156,11 +155,11 @@ class AndroidxSqliteUtilsTest {
   }
 
   @Test
-  fun `isPragma throws exception for strings shorter than 3 chars`() {
+  fun `isPragma returns false for strings shorter than 3 chars`() {
     with(AndroidxSqliteUtils) {
-      assertFailsWith<IndexOutOfBoundsException> { "PR".isPragma() }
-      assertFailsWith<IndexOutOfBoundsException> { "P".isPragma() }
-      assertFailsWith<IndexOutOfBoundsException> { "".isPragma() }
+      assertFalse("PR".isPragma())
+      assertFalse("P".isPragma())
+      assertFalse("".isPragma())
     }
   }
 

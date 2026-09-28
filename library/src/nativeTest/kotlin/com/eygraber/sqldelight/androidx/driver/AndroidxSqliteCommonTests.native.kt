@@ -23,13 +23,14 @@ actual class CommonEphemeralTest : AndroidxSqliteEphemeralTest()
 actual class CommonMigrationTest : AndroidxSqliteMigrationTest()
 actual class CommonQueryTest : AndroidxSqliteQueryTest()
 actual class CommonTransacterTest : AndroidxSqliteTransacterTest()
+actual class CommonTransacterThreadingTest : AndroidxSqliteTransacterThreadingTest()
 
 actual fun androidxSqliteTestDriver(): SQLiteDriver = BundledSQLiteDriver()
 
 @Suppress("InjectDispatcher")
 actual val IoDispatcher: CoroutineDispatcher get() = Dispatchers.IO
 
-actual fun deleteFile(name: String) {
+actual suspend fun deleteFile(name: String) {
   FileSystem.SYSTEM.delete(name.toPath())
 }
 

@@ -13,6 +13,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlin.random.Random
 import kotlin.random.nextULong
+import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -89,7 +90,12 @@ abstract class AndroidxSqliteConcurrencyTest {
     }
   }
 
-  private inline fun withDatabase(
+  @AfterTest
+  fun closeTestDriver() {
+    closeAndroidxSqliteTestDriver()
+  }
+
+  private suspend inline fun withDatabase(
     schema: SqlSchema<QueryResult.AsyncValue<Unit>>,
     dbName: String,
     noinline onCreate: suspend SqlDriver.() -> Unit,
@@ -108,7 +114,7 @@ abstract class AndroidxSqliteConcurrencyTest {
     ),
     test: SqlDriver.() -> Unit,
   ) {
-    val fullDbName = "${this::class.qualifiedName.orEmpty()}.$dbName.db"
+    val fullDbName = "${this::class.simpleName.orEmpty()}.$dbName.db"
 
     if(deleteDbBeforeRun) {
       deleteFile(fullDbName)
@@ -170,11 +176,8 @@ abstract class AndroidxSqliteConcurrencyTest {
                 identifier = null,
                 sql = "SELECT id FROM test ORDER BY id DESC LIMIT 1;",
                 mapper = { cursor ->
-                  if(cursor.next().value) {
-                    QueryResult.Value(cursor.getLong(0) ?: -1L)
-                  }
-                  else {
-                    QueryResult.Value(-1L)
+                  QueryResult.AsyncValue {
+                    if(cursor.next().await()) cursor.getLong(0) ?: -1L else -1L
                   }
                 },
                 parameters = 0,
@@ -205,11 +208,8 @@ abstract class AndroidxSqliteConcurrencyTest {
         identifier = null,
         sql = "SELECT id FROM test ORDER BY id DESC LIMIT 1;",
         mapper = { cursor ->
-          if(cursor.next().value) {
-            QueryResult.Value(cursor.getLong(0) ?: -1L)
-          }
-          else {
-            QueryResult.Value(-1L)
+          QueryResult.AsyncValue {
+            if(cursor.next().await()) cursor.getLong(0) ?: -1L else -1L
           }
         },
         parameters = 0,
@@ -273,11 +273,8 @@ abstract class AndroidxSqliteConcurrencyTest {
             identifier = null,
             sql = "SELECT value FROM test WHERE id = 0",
             mapper = { cursor ->
-              if(cursor.next().value) {
-                QueryResult.Value(cursor.getString(0))
-              }
-              else {
-                QueryResult.Value(null)
+              QueryResult.AsyncValue {
+                if(cursor.next().await()) cursor.getString(0) else null
               }
             },
             parameters = 0,
@@ -324,11 +321,8 @@ abstract class AndroidxSqliteConcurrencyTest {
             identifier = null,
             sql = "SELECT value FROM test WHERE id = 1",
             mapper = { cursor ->
-              if(cursor.next().value) {
-                QueryResult.Value(cursor.getString(0))
-              }
-              else {
-                QueryResult.Value(null)
+              QueryResult.AsyncValue {
+                if(cursor.next().await()) cursor.getString(0) else null
               }
             },
             parameters = 0,

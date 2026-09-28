@@ -2,7 +2,9 @@ package com.eygraber.sqldelight.androidx.driver
 
 import androidx.collection.LruCache
 import androidx.sqlite.SQLiteConnection
-import androidx.sqlite.execSQL
+import androidx.sqlite.async.executeSQL
+import androidx.sqlite.async.prepare
+import androidx.sqlite.async.step
 import app.cash.sqldelight.Query
 import app.cash.sqldelight.SuspendingTransacter
 import app.cash.sqldelight.Transacter
@@ -12,14 +14,13 @@ import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.db.SqlPreparedStatement
 import kotlinx.atomicfu.locks.ReentrantLock
 import kotlinx.atomicfu.locks.withLock
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlin.concurrent.Volatile
 import kotlin.coroutines.AbstractCoroutineContextElement
-import kotlin.coroutines.ContinuationInterceptor
 import kotlin.coroutines.CoroutineContext
 
 internal interface ConnectionHolder {
@@ -52,10 +53,9 @@ internal class AndroidxSqliteExecutingDriver(
       null -> {
         val writer = connectionPool.acquireWriterConnection()
         // The Transaction's endTransaction path releases the writer once BEGIN IMMEDIATE succeeds.
-        // Before that — e.g. a cancellation during the dispatcher switch, a throw before the
-        // runBlocking coroutine is set up, or BEGIN IMMEDIATE itself throwing — the release is
-        // owned by this call site. released=true suppresses the fallback once ownership transfers
-        // to the Transaction.
+        // Before that — e.g. a cancellation during the dispatcher switch, or BEGIN IMMEDIATE
+        // itself throwing — the release is owned by this call site. released=true suppresses the
+        // fallback once ownership transfers to the Transaction.
         var released = false
         try {
           startTransactionCoroutine(
@@ -91,60 +91,59 @@ internal class AndroidxSqliteExecutingDriver(
       }
     }
 
-  private suspend inline fun <R> startTransactionCoroutine(
+  private suspend fun <R> startTransactionCoroutine(
     writeConnection: SQLiteConnection,
-    crossinline block: suspend () -> R,
-    crossinline onTransactionStarted: () -> Unit,
+    block: suspend () -> R,
+    onTransactionStarted: () -> Unit,
   ): R = connectionPool.runOnDispatcher {
-    val context = currentCoroutineContext()
+    val transaction = Transaction(
+      enclosingTransaction = null,
+      connection = writeConnection,
+    )
+    transaction.begin()
+    // The transaction (and everything SqlDelight does with it, including reading its
+    // pendingTables during postTransactionCleanup) is confined to this thread for its entire
+    // lifetime (withTransactionThreadConfinement below never leaves the caller thread). Recording
+    // the owner thread lets currentTransaction() hide the transaction from other threads —
+    // SqlDelight's notifyQueries would otherwise mutate the transaction's unsynchronized
+    // pendingTables from a concurrent coroutine while cleanup reads it.
+    activeTransaction = ActiveTransaction(
+      ownerThreadId = currentThreadId(),
+      transaction = transaction,
+    )
+    // BEGIN IMMEDIATE has now run. The Transaction's endTransaction releases the writer, but it
+    // only runs once block() starts (SqlDelight invokes it from block's finally). If cancellation
+    // fires at the withContext boundary before block() runs, endTransaction never executes, so we
+    // must roll back the open transaction and release the writer here. onTransactionStarted()
+    // tells the dispatch() call site to stop owning the release; blockStarted tracks whether that
+    // ownership has reached block() yet.
+    onTransactionStarted()
 
-    // borrow this trick from Room to keep the
-    // entire transaction on one thread until it completes
-    // https://eygraber.short.gy/room-transaction-trick
-    @Suppress("RunBlockingInSuspendFunction")
-    runBlocking(context.minusKey(ContinuationInterceptor)) {
-      val dispatcher = requireNotNull(coroutineContext[ContinuationInterceptor]) {
-        "Couldn't find a ContinuationInterceptor in the transaction's runBlocking context."
-      }
-
-      val transaction = Transaction(
-        enclosingTransaction = null,
-        connection = writeConnection,
-      ).also { newTransaction ->
-        // The transaction (and everything SqlDelight does with it, including reading its
-        // pendingTables during postTransactionCleanup) is confined to this thread for its entire
-        // lifetime. Recording the owner thread lets currentTransaction() hide the transaction from
-        // other threads — SqlDelight's notifyQueries would otherwise mutate the transaction's
-        // unsynchronized pendingTables from a concurrent coroutine while cleanup reads it.
-        activeTransaction = ActiveTransaction(
-          ownerThreadId = currentThreadId(),
-          transaction = newTransaction,
-        )
-      }
-      // BEGIN IMMEDIATE has now run. The Transaction's endTransaction releases the writer, but it
-      // only runs once block() starts (SqlDelight invokes it from block's finally). If cancellation
-      // fires at the withContext boundary before block() runs, endTransaction never executes, so we
-      // must roll back the open transaction and release the writer here. onTransactionStarted()
-      // tells the dispatch() call site to stop owning the release; blockStarted tracks whether that
-      // ownership has reached block() yet.
-      onTransactionStarted()
-
-      var blockStarted = false
-      try {
-        withContext(dispatcher + TransactionElement(transaction = transaction)) {
+    var blockStarted = false
+    try {
+      // borrow this trick from Room to keep the entire transaction on one thread until it completes
+      // https://eygraber.short.gy/room-transaction-trick
+      // On JS/wasmJs the trick is a no-op since there's only one thread anyway.
+      withTransactionThreadConfinement {
+        withContext(TransactionElement(transaction = transaction)) {
           blockStarted = true
           block()
         }
       }
-      finally {
-        // blockStarted only stays false if withContext threw before running block() — i.e.
-        // cancellation at the dispatch boundary, so this never runs on a normal return.
-        if(!blockStarted) {
-          withContext(NonCancellable) {
-            try {
-              writeConnection.execSQL("ROLLBACK")
-            }
-            catch(_: Throwable) {}
+    }
+    finally {
+      // blockStarted only stays false if withContext threw before running block() — i.e.
+      // cancellation at the dispatch boundary, so this never runs on a normal return.
+      if(!blockStarted) {
+        withContext(NonCancellable) {
+          try {
+            writeConnection.executeSQL("ROLLBACK")
+          }
+          catch(c: CancellationException) {
+            throw c
+          }
+          catch(_: Throwable) {}
+          finally {
             activeTransaction = null
             connectionPool.releaseWriterConnection()
           }
@@ -220,8 +219,10 @@ internal class AndroidxSqliteExecutingDriver(
         setJournalMode(
           sql = sql,
           mapper = { cursor ->
-            cursor.next()
-            QueryResult.AsyncValue { cursor.getString(0) }
+            QueryResult.AsyncValue {
+              cursor.next().await()
+              cursor.getString(0)
+            }
           },
           parameters = parameters,
           binders = binders,
@@ -291,7 +292,7 @@ internal class AndroidxSqliteExecutingDriver(
     identifier: Int?,
     isStatementCacheSkipped: Boolean,
     connection: SQLiteConnection,
-    createStatement: (SQLiteConnection) -> AndroidxStatement,
+    createStatement: suspend (SQLiteConnection) -> AndroidxStatement,
     binders: (SqlPreparedStatement.() -> Unit)?,
     result: suspend AndroidxStatement.() -> T,
   ): T {
@@ -348,7 +349,7 @@ internal class AndroidxSqliteExecutingDriver(
 
   private suspend inline fun <R> withConnection(
     isWrite: Boolean,
-    block: SQLiteConnection.() -> R,
+    crossinline block: suspend SQLiteConnection.() -> R,
   ): R = when(val transaction = currentCoroutineContext()[TransactionElement]) {
     null -> {
       val connection = when {
@@ -388,9 +389,9 @@ internal class AndroidxSqliteExecutingDriver(
     override val enclosingTransaction: Transacter.Transaction?,
     override val connection: SQLiteConnection,
   ) : Transacter.Transaction(), ConnectionHolder {
-    init {
+    suspend fun begin() {
       if(enclosingTransaction == null) {
-        connection.execSQL("BEGIN IMMEDIATE")
+        connection.executeSQL("BEGIN IMMEDIATE")
       }
     }
 
@@ -399,10 +400,10 @@ internal class AndroidxSqliteExecutingDriver(
         if(enclosingTransaction == null) {
           try {
             if(successful) {
-              connection.execSQL("COMMIT")
+              connection.executeSQL("COMMIT")
             }
             else {
-              connection.execSQL("ROLLBACK")
+              connection.executeSQL("ROLLBACK")
             }
           }
           finally {
@@ -416,7 +417,8 @@ internal class AndroidxSqliteExecutingDriver(
   }
 }
 
-private fun SQLiteConnection.getTotalChangedRows() =
+@Suppress("RedundantSuspendModifier")
+private suspend fun SQLiteConnection.getTotalChangedRows() =
   prepare("SELECT changes()").use { statement ->
     if(statement.step()) statement.getLong(0) else 0
   }

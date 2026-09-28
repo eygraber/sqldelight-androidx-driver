@@ -1,4 +1,7 @@
 import com.android.build.api.variant.HasUnitTest
+import org.gradle.api.tasks.testing.logging.TestExceptionFormat
+import org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi
+import org.jetbrains.kotlin.gradle.ExperimentalWasmDsl
 import org.jetbrains.kotlin.gradle.dsl.ExplicitApiMode
 
 plugins {
@@ -12,11 +15,59 @@ plugins {
 kotlin {
   defaultKmpTargets(
     project = project,
+    webOptions = KmpTarget.WebOptions(
+      isNodeEnabled = false,
+      isBrowserEnabled = true,
+      isBrowserEnabledForLibraryTests = true,
+    ),
     androidNamespace = "com.eygraber.sqldelight.androidx.driver.integration",
   )
 
-  androidLibrary {
+  android {
     withHostTest {}
+  }
+
+  @OptIn(ExperimentalWasmDsl::class)
+  wasmJs {
+    browser {
+      testTask {
+        testLogging {
+          exceptionFormat = TestExceptionFormat.FULL
+        }
+        useKarma {
+          // ChromeHeadlessNoSandbox so the browser starts under restricted CI runners
+          // (the default chrome-headless launcher fails to start on GitHub-hosted Linux
+          // runners without --no-sandbox).
+          useChromeHeadlessNoSandbox()
+        }
+      }
+    }
+  }
+
+  js {
+    browser {
+      testTask {
+        testLogging {
+          exceptionFormat = TestExceptionFormat.FULL
+        }
+        useKarma {
+          useChromeHeadlessNoSandbox()
+        }
+      }
+    }
+  }
+
+  @OptIn(ExperimentalKotlinGradlePluginApi::class)
+  applyDefaultHierarchyTemplate {
+    common {
+      group("nonWeb") {
+        withCompilations { it.target.targetName == "android" }
+        withJvm()
+        group("native") {
+          withNative()
+        }
+      }
+    }
   }
 
   sourceSets {
@@ -30,7 +81,6 @@ kotlin {
       implementation(projects.coroutinesExtensions)
       implementation(projects.library)
 
-      implementation(libs.androidx.sqliteBundled)
       implementation(libs.cashapp.sqldelight.runtime)
 
       implementation(libs.kotlinx.coroutines.core)
@@ -39,12 +89,22 @@ kotlin {
       implementation(libs.test.kotlinx.coroutines)
     }
 
+    named("nonWebTest").dependencies {
+      implementation(libs.androidx.sqliteBundled)
+    }
+
     jvmTest.dependencies {
       implementation(libs.test.kotlin.junit)
     }
 
     nativeTest.dependencies {
       implementation(libs.okio)
+    }
+
+    named("webTest").dependencies {
+      implementation(projects.opfsDriver)
+      implementation(libs.androidx.sqliteWeb)
+      implementation(libs.kotlinx.browser)
     }
   }
 }

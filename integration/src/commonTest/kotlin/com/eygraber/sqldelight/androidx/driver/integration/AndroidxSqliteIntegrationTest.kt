@@ -1,6 +1,5 @@
 package com.eygraber.sqldelight.androidx.driver.integration
 
-import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import app.cash.sqldelight.SuspendingTransactionWithoutReturn
 import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteConfiguration
 import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteDatabaseType
@@ -22,7 +21,7 @@ abstract class AndroidxSqliteIntegrationTest {
 
   val driver by lazy {
     AndroidxSqliteDriver(
-      driver = BundledSQLiteDriver(),
+      driver = testSqliteDriver(),
       databaseType = type,
       schema = AndroidXDb.Schema,
       configuration = createConfiguration(),
@@ -36,6 +35,7 @@ abstract class AndroidxSqliteIntegrationTest {
   @AfterTest
   fun cleanup() {
     driver.close()
+    closeTestSqliteDriver()
 
     (type as? AndroidxSqliteDatabaseType.File)?.let { type ->
       val dbName = type.databaseFilePath

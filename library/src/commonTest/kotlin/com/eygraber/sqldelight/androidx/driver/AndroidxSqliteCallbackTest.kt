@@ -7,6 +7,7 @@ import app.cash.sqldelight.db.SqlSchema
 import kotlinx.coroutines.test.runTest
 import kotlin.random.Random
 import kotlin.random.nextULong
+import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -99,7 +100,12 @@ abstract class AndroidxSqliteCallbackTest {
     }
   }
 
-  private inline fun withDatabase(
+  @AfterTest
+  fun closeTestDriver() {
+    closeAndroidxSqliteTestDriver()
+  }
+
+  private suspend inline fun withDatabase(
     schema: SqlSchema<QueryResult.AsyncValue<Unit>>,
     dbName: String,
     noinline onConfigure: suspend AndroidxSqliteConfigurableDriver.() -> Unit,
@@ -110,7 +116,7 @@ abstract class AndroidxSqliteCallbackTest {
     deleteDbAfterRun: Boolean = true,
     test: SqlDriver.() -> Unit,
   ) {
-    val fullDbName = "${this::class.qualifiedName.orEmpty()}.$dbName.db"
+    val fullDbName = "${this::class.simpleName.orEmpty()}.$dbName.db"
 
     if(deleteDbBeforeRun) {
       deleteFile(fullDbName)

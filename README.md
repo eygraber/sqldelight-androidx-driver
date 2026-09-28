@@ -32,12 +32,12 @@ repositories {
 
 // Android/JVM
 dependencies {
-  implementation("com.eygraber:sqldelight-androidx-driver:0.2.2")
+  implementation("com.eygraber:sqldelight-androidx-driver:0.5.0-alpha.11")
 }
 
 // Multiplatform
 commonMain.dependencies {
-  implementation("com.eygraber:sqldelight-androidx-driver:0.2.2")
+  implementation("com.eygraber:sqldelight-androidx-driver:0.5.0-alpha.11")
 }
 ```
 
@@ -143,6 +143,124 @@ actual class DatabaseTypeFactory {
 }
 ```
 
+### Multiplatform with a web target (JS / wasmJs)
+
+Add the `:opfs-driver` dependency to your web source set:
+
+```kotlin
+val webMain by getting {
+  dependencies {
+    implementation("com.eygraber:sqldelight-androidx-driver-opfs:0.5.0-alpha.11")
+  }
+}
+```
+
+On web, the `SQLiteDriver` constructor differs from non-web targets, so make `createSqliteDriver`
+an `expect`/`actual`. The `databaseType` factory from the previous section stays the same:
+
+```kotlin
+// src/commonMain/kotlin
+expect fun createSqliteDriver(): SQLiteDriver
+
+fun createDatabase(databaseTypeFactory: DatabaseTypeFactory): Database {
+  val driver = AndroidxSqliteDriver(
+    driver = createSqliteDriver(),
+    databaseType = databaseTypeFactory.createDatabaseType(),
+    schema = Database.Schema,
+  )
+  return Database(driver)
+}
+
+// src/nonWebMain/kotlin (or separately in androidMain / jvmMain / nativeMain)
+actual fun createSqliteDriver(): SQLiteDriver = BundledSQLiteDriver()
+
+// src/webMain/kotlin (or separately in jsMain / wasmJsMain)
+actual fun createSqliteDriver(): SQLiteDriver = androidxSqliteOpfsDriver()
+```
+
+On web, build the `databaseType` with `AndroidxSqliteDatabaseType.File("my.db")` — the file is
+persisted in the browser's [Origin Private File System].
+
+> [!IMPORTANT]
+> On web the file name is a flat key in the OPFS pool. The pool accepts a name like `"data/my.db"`
+> as one key and creates no directory. A name over 511 bytes fails to open.
+
+> [!NOTE]
+> If your project only targets web, you don't need `expect`/`actual` — just call
+> `androidxSqliteOpfsDriver()` and pass it to `AndroidxSqliteDriver`.
+
+CI runs the test suites on both web targets. The `js` target works with the default Kotlin/JS
+module kind, so `useEsModules()` is not required. The driver resolves the `@sqlite.org/sqlite-wasm`
+files with `new URL(..., import.meta.url)`. The Kotlin/JS webpack build rewrites these URLs into
+bundled asset URLs.
+
+#### Closing the driver
+
+`androidxSqliteOpfsDriver()` returns an `OpfsSqliteDriver`. It owns a Web Worker that holds the
+OPFS handles, the multi-tab Web Locks, and the cross-tab channels. `AndroidxSqliteDriver.close()`
+closes the connection and then closes the `OpfsSqliteDriver`, which releases all of these and
+terminates the worker. Call it when you recreate the database, for example on logout.
+
+```kotlin
+val driver = AndroidxSqliteDriver(
+  driver = androidxSqliteOpfsDriver(),
+  databaseType = AndroidxSqliteDatabaseType.File("my.db"),
+  schema = Database.Schema,
+)
+
+// later
+driver.close()
+```
+
+`close()` is idempotent. After it, `open` on the `OpfsSqliteDriver` fails with an
+`IllegalStateException`, and queries that the worker had queued fail with an exception.
+
+#### Multi-tab support
+
+Pass an `OpfsMultiTabMode` to `androidxSqliteOpfsDriver(...)` to pick how tabs coordinate access:
+
+- **`PauseOnHidden` (default)** — the active tab uses the database; backgrounded tabs pause and
+  queue their queries until they regain focus. Adds no per-query overhead. Use this when your
+  app is primarily used in one tab at a time, or if it is OK for queries to queue when your tab is not active.
+  If a tab is hidden while a transaction is open, the hand-off waits until that transaction ends.
+  The other tab gets the database after the commit or the rollback.
+- **`Shared`** — every tab can run queries concurrently regardless of focus. One tab is elected
+  the database owner and serves queries on behalf of the others; ownership transfers
+  automatically when the owning tab closes. Use this when users may actively interact with
+  multiple tabs simultaneously, and you're willing to pay a cross-tab round-trip per query in
+  non-owner tabs.
+- **`Single`** — only one tab can use the database at a time; opening a second tab while the
+  first is open will fail. Use this only when your app is guaranteed to run in a single tab.
+
+```kotlin
+import com.eygraber.sqldelight.androidx.driver.opfs.OpfsMultiTabMode
+import com.eygraber.sqldelight.androidx.driver.opfs.androidxSqliteOpfsDriver
+
+val driver = androidxSqliteOpfsDriver(multiTabMode = OpfsMultiTabMode.Shared)
+```
+
+##### Surfacing the lock state to your UI
+
+In `PauseOnHidden`, queries from a backgrounded tab queue silently. Pass `onLockStateChange` to
+render an indicator instead:
+
+```kotlin
+import com.eygraber.sqldelight.androidx.driver.opfs.OpfsLockState
+import com.eygraber.sqldelight.androidx.driver.opfs.androidxSqliteOpfsDriver
+
+val lockState = MutableStateFlow(OpfsLockState.Live)
+val driver = androidxSqliteOpfsDriver(
+  onLockStateChange = { lockState.value = it },
+)
+```
+
+The callback fires once synchronously with the initial state, and again on each transition. In
+`Single` and `Shared` modes it fires exactly once with `Live`. It does not fire after the driver
+is closed.
+
+For background on how the web driver is built and how to substitute your own worker if
+`:opfs-driver` doesn't fit your needs, see [Web driver design notes](#web-driver-design-notes).
+
 ### Provide OpenFlags
 
 If you want to provide `OpenFlags` to the bundled or native driver, you can use:
@@ -153,7 +271,7 @@ Database(
     connectionFactory = object : AndroidxSqliteConnectionFactory {
       override val driver = BundledSQLiteDriver()
       
-      override fun createConnection(name: String) =
+      override suspend fun createConnection(name: String) =
         driver.open(name, SQLITE_OPEN_READWRITE or SQLITE_OPEN_CREATE)
     },
     databaseType = AndroidxSqliteDatabaseType.File("<absolute path to db file>"),
@@ -266,7 +384,7 @@ dispatches each query onto its own connection pool, so wrapping every mapper in 
 
 ```kotlin
 dependencies {
-  implementation("com.eygraber:sqldelight-coroutines-extensions:0.2.2")
+  implementation("com.eygraber:sqldelight-coroutines-extensions:0.5.0-alpha.11")
 }
 ```
 
@@ -541,6 +659,10 @@ AndroidxSqliteConfiguration(
 > In-Memory and temporary databases automatically use `SingleReaderWriter` model regardless of configuration, as
 > connection pooling provides no benefit for these database types.
 
+> [!NOTE]  
+> On web (`js` / `wasmJs`) every model resolves to one connection, so `readerCount` and the dispatcher provider
+> have no effect there. Shared configuration in `commonMain` works on web without changes.
+
 ## Dispatchers
 
 The driver runs SQLite work on its own `CoroutineDispatcher`, sized to match the concurrency model
@@ -563,6 +685,10 @@ AndroidxSqliteConcurrencyModel.memoryOptimizedProvider()
 // at the cost of extra OS threads.
 AndroidxSqliteConcurrencyModel.CpuCacheHitOptimizedProvider
 ```
+
+`CpuCacheHitOptimizedProvider` is not available on web, because web targets have no threads. Access
+to it throws `UnsupportedOperationException` there. Use `memoryOptimizedProvider()` in shared code
+that also runs on web.
 
 `memoryOptimizedProvider()` also accepts a base dispatcher if you'd rather derive parallelism from
 somewhere other than `Dispatchers.IO`:
@@ -621,6 +747,68 @@ This ensures all connections use the same journal mode and prevents inconsistenc
 5. **Platform differences**: Android may have different optimal settings than JVM/Native
 
 For additional background on WAL mode and dispatcher tuning, see [WAL & Dispatchers].
+
+## Web driver design notes
+
+`androidx.sqlite:sqlite-bundled` doesn't ship a JS or wasmJs variant. On web, AndroidX provides
+`WebWorkerSQLiteDriver`, a transport that delegates SQL execution to a Web Worker implementing
+its protocol. The `:opfs-driver` module ships such a worker built on top of
+[`@sqlite.org/sqlite-wasm`]'s [OPFS Sync Access Handle Pool VFS][SAHPool], so database files are
+persisted in the browser's [Origin Private File System]. `androidxSqliteOpfsDriver(...)` returns
+an `OpfsSqliteDriver`, a `SQLiteDriver` that delegates to `WebWorkerSQLiteDriver` and adds
+`close()`. `opfsWorker(...)` returns the underlying `OpfsWorker`, which exposes the `Worker` and
+the same `close()`.
+
+`WebWorkerSQLiteDriver` never terminates its worker. `OpfsWorker.close()` sends a close message
+to the worker, which closes its databases, releases the SAH handles, releases its Web Locks, and
+closes its `BroadcastChannel` before it acknowledges. The main thread then releases the
+foreground Web Lock (in `PauseOnHidden`), removes its listeners and timers, closes the control
+port, and terminates the worker. If the worker does not acknowledge within ten seconds, the main
+thread proceeds anyway.
+
+The SAHPool VFS keeps a flat pool of pre-allocated handles rather than honoring real OPFS paths,
+which is why a file name with a path separator is stored as one flat key.
+
+The worker source is embedded as a string and instantiated from a `Blob` URL, so consumers don't
+need to copy any JS resource into their bundle. The `@sqlite.org/sqlite-wasm` npm dependency is
+exposed transitively (via `api(npm(...))`), so `kotlinNpmInstall` pulls it in automatically — the
+worker dynamic-imports it at runtime against URLs resolved through webpack's
+`new URL(..., import.meta.url)` syntax.
+
+Browsers don't allow more than one connection to an OPFS database at a time, which is why the
+multi-tab modes exist: `PauseOnHidden` coordinates with a same-origin Web Lock that the active
+tab holds while visible; `Shared` elects a single owner tab via a `BroadcastChannel` and proxies
+queries from non-owner tabs to it; `Single` simply refuses to open a second connection.
+
+### Bringing your own worker
+
+If the bundled OPFS worker doesn't fit your needs (e.g., a different VFS, custom multi-tab
+coordination, or an existing sqlite-wasm setup), construct `WebWorkerSQLiteDriver` directly with
+any `Worker` that implements its protocol:
+
+```kotlin
+// src/webMain/kotlin
+actual fun createSqliteDriver(): SQLiteDriver = WebWorkerSQLiteDriver(myWorker())
+```
+
+To use the bundled worker with your own `WebWorkerSQLiteDriver`, call `opfsWorker()` and pass
+`OpfsWorker.worker`. Keep the `OpfsWorker` and call its `close()` after you close the driver.
+
+## Contributing
+
+The Apple test suite runs on macOS runners; everything else (Android host, JVM, Native, and the
+`js` and `wasmJs` browser tests) runs on Linux. The driver, integration, and coroutines test
+suites live in `commonTest` and run on every target, including both browser targets. Tests that
+need threads, `OpenFlags`, or more than one connection stay in `nonWebTest`. The browser tests
+drive Karma + headless Chrome — `./gradlew allTests` will download Chrome via Kotlin's build
+infrastructure on first run, but you need a working X-less Chromium-compatible binary on your
+`PATH` for local runs to succeed (the standard `google-chrome-stable` / `chromium` package
+satisfies it).
+
+[Origin Private File System]: https://developer.mozilla.org/en-US/docs/Web/API/File_System_API/Origin_private_file_system
+[AndroidX example worker]: https://cs.android.com/androidx/platform/frameworks/support/+/androidx-main:sqlite/sqlite-web-worker-test/web-worker/worker.js
+[`@sqlite.org/sqlite-wasm`]: https://www.npmjs.com/package/@sqlite.org/sqlite-wasm
+[SAHPool]: https://sqlite.org/wasm/doc/trunk/persistence.md
 
 [AndroidX Kotlin Multiplatform SQLite]: https://developer.android.com/kotlin/multiplatform/sqlite
 [SQLDelight]: https://github.com/sqldelight/sqldelight

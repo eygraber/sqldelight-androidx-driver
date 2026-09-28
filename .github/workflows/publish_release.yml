@@ -7,7 +7,7 @@ env:
   VERSION_FILE: gradle.properties
   VERSION_EXTRACT_PATTERN: '(?<=version=).+'
   GH_USER_NAME: github.actor
-  GRADLE_OPTS: -Dkotlin.incremental=false -Dorg.gradle.jvmargs="-Xmx16g -XX:+HeapDumpOnOutOfMemoryError -Dfile.encoding=UTF-8 -XX:MaxMetaspaceSize=1024m"
+  GRADLE_OPTS: -Dorg.gradle.daemon=false -Dkotlin.incremental=false -Dorg.gradle.jvmargs="-Xmx16g -XX:+HeapDumpOnOutOfMemoryError -Dfile.encoding=UTF-8 -XX:MaxMetaspaceSize=1024m"
 
 jobs:
   publish_artifacts:
@@ -34,6 +34,9 @@ jobs:
         uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: wrapper
+
+      - name: Regenerate package locks for release version
+        run: ./gradlew kotlinUpgradePackageLock kotlinWasmUpgradePackageLock --no-build-cache --no-configuration-cache --rerun-tasks -Pversion=${{ env.RELEASE_VERSION }}
 
       - name: Publish the artifacts
         env:
@@ -92,33 +95,29 @@ jobs:
           name: Release ${{ env.RELEASE_VERSION }}
           tag: ${{ env.RELEASE_VERSION }}
           token: ${{ secrets.PUSH_PAT }}
+          prerelease: true
+          makeLatest: false
 
       - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.head_ref }}
           token: ${{ secrets.PUSH_PAT }}
 
-      - uses: actions/setup-java@v6
-        with:
-          distribution: 'zulu'
-          java-version-file: .ci-java-version
-
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v6
-        with:
-          gradle-version: wrapper
-
       - name: Prepare next dev version
         id: prepare_next_dev
         run: |
           sed -i -e 's/${{ env.CURRENT_VERSION }}/${{ env.NEXT_VERSION }}/g' gradle.properties && \
-            sed -i -E -e 's/sqldelight-androidx-driver(:|\/)[0-9]+\.[0-9]+\.[0-9]+/sqldelight-androidx-driver\1${{ env.RELEASE_VERSION }}/g' README.md && \
-            sed -i -E -e 's/sqldelight-coroutines-extensions(:|\/)[0-9]+\.[0-9]+\.[0-9]+/sqldelight-coroutines-extensions\1${{ env.RELEASE_VERSION }}/g' README.md
+            sed -i -E -e 's/sqldelight-androidx-driver(:|\/)[0-9]+\.[0-9]+\.[0-9]+(-alpha\.[0-9]+)?/sqldelight-androidx-driver\1${{ env.RELEASE_VERSION }}/g' README.md && \
+            sed -i -E -e 's/sqldelight-androidx-driver-opfs(:|\/)[0-9]+\.[0-9]+\.[0-9]+(-alpha\.[0-9]+)?/sqldelight-androidx-driver-opfs\1${{ env.RELEASE_VERSION }}/g' README.md && \
+            sed -i -E -e 's/sqldelight-coroutines-extensions(:|\/)[0-9]+\.[0-9]+\.[0-9]+(-alpha\.[0-9]+)?/sqldelight-coroutines-extensions\1${{ env.RELEASE_VERSION }}/g' README.md
+
+      - name: Update package-lock.json if needed
+        run: ./gradlew kotlinUpgradePackageLock kotlinWasmUpgradePackageLock --no-build-cache --no-configuration-cache --rerun-tasks
 
       - name: Commit next dev version
         id: commit_next_dev
         uses: EndBug/add-and-commit@v11
         with:
-          add: "['gradle.properties', 'README.md']"
+          add: "['gradle.properties', 'README.md', 'kotlin-js-store/package-lock.json', 'kotlin-js-store/wasm/package-lock.json']"
           default_author: github_actions
           message: "Prepare next dev version"
