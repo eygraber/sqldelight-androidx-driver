@@ -866,6 +866,15 @@ multi-tab modes exist: `PauseOnHidden` coordinates with a same-origin Web Lock t
 tab holds while visible; `Shared` elects a single owner tab via a `BroadcastChannel` and proxies
 queries from non-owner tabs to it; `Single` simply refuses to open a second connection.
 
+SQLite initialization retries failed module imports and WASM initialization up to five times
+with backoff from 250 ms to 4 seconds. Import retries use fresh module URLs so a cached import
+failure cannot prevent recovery. A successful import is reused when retrying WASM initialization.
+If initialization still fails, pending database calls receive the error. Normal OPFS contention
+in `PauseOnHidden` keeps calls queued until the other tab releases its handles. `Single` retries
+on the next call; `PauseOnHidden` retries while visible and cancels backoff when paused; `Shared` releases
+the owner lock so another tab can take over, then rejoins the election. Closing cancels backoff
+and waits for any active initialization to settle before releasing handles.
+
 ### Bringing your own worker
 
 If the bundled OPFS worker doesn't fit your needs (e.g., a different VFS, custom multi-tab

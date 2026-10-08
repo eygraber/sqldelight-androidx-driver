@@ -54,6 +54,12 @@ internal fun enrichForLeader(requestData: dynamic, opaque: Int?): dynamic =
     else -> requestData
   }
 
+internal fun failPendingLeaderResponses(message: String) {
+  for(reqId in pendingLeaderResponses.keys.toList()) {
+    handleLeaderResponse(reqId, newLeaderResultError(message))
+  }
+}
+
 internal fun handleLeaderResponse(reqId: Int, response: dynamic) {
   val pending = pendingLeaderResponses[reqId] ?: return
   pendingLeaderResponses.remove(reqId)

@@ -54,8 +54,10 @@ internal fun thenAccept(
   js("promise.then(onFulfilled, onRejected)")
 }
 
-internal fun setTimeout(ms: Int, callback: () -> Unit) {
-  js("setTimeout(callback, ms)")
+internal fun setTimeout(ms: Int, callback: () -> Unit): Int = js("setTimeout(callback, ms)")
+
+internal fun clearTimeout(timer: Int) {
+  js("clearTimeout(timer)")
 }
 
 internal fun newTabId(): String = js(
@@ -102,7 +104,9 @@ internal fun abortLockWatch(controller: dynamic) {
 
 // sqlite-wasm caches a rejected install, so without forceReinitIfPreviouslyFailed every retry rethrows the first error.
 internal fun installSqliteOpfsSAHPoolVfs(sqlite3: dynamic): Promise<dynamic> = js(
-  """sqlite3.installOpfsSAHPoolVfs({ clearOnInit: false, forceReinitIfPreviouslyFailed: true })""",
+  """Promise.resolve().then(() => sqlite3.installOpfsSAHPoolVfs({
+    clearOnInit: false, forceReinitIfPreviouslyFailed: true
+  }))""",
 )
 
 internal fun newOpfsSAHPoolDb(poolUtil: dynamic, fileName: String): dynamic = js(
@@ -110,7 +114,7 @@ internal fun newOpfsSAHPoolDb(poolUtil: dynamic, fileName: String): dynamic = js
 )
 
 internal fun installSqlite3(mod: dynamic, wasmUrl: String): Promise<dynamic> = js(
-  """mod.default({ locateFile: (path) => path === 'sqlite3.wasm' ? wasmUrl : path })""",
+  """Promise.resolve().then(() => mod.default({ locateFile: (path) => path === 'sqlite3.wasm' ? wasmUrl : path }))""",
 )
 
 internal fun bindParameterCount(sqlite3: dynamic, stmt: dynamic): Int = js(
@@ -234,6 +238,10 @@ internal fun bcResponse(followerId: dynamic, reqId: dynamic, response: dynamic):
 
 internal fun bcLeaderChanged(leaderId: String): dynamic = js(
   """({ kind: 'leader-changed', leaderId: leaderId })""",
+)
+
+internal fun bcLeaderInitFailed(leaderId: String, error: String): dynamic = js(
+  """({ kind: 'leader-init-failed', leaderId: leaderId, error: error })""",
 )
 
 internal fun bcWhoIsLeader(followerId: String): dynamic = js(

@@ -261,6 +261,7 @@ private fun executeLeaderRequest(followerId: String, payload: dynamic): dynamic 
 }
 
 private fun setupLeader() {
+  if(closeRequested) return
   isLeader = true
   knownLeaderId = tabId
   acceptingDriverMessages = true
@@ -280,9 +281,7 @@ private fun attemptLeaderLock() {
       if(!closeRequested) {
         ensureLocalSqlite(
           onDone = ::setupLeader,
-          onError = { err ->
-            consoleErrorWith("sqldelight-androidx-opfs-worker: failed to initialize sqlite3", err)
-          },
+          onError = ::onSharedInitFailed,
         )
       }
     },
@@ -293,6 +292,20 @@ private fun attemptLeaderLock() {
       }
     },
   )
+}
+
+private fun onSharedInitFailed(err: dynamic) {
+  if(closeRequested) return
+  consoleErrorWith("sqldelight-androidx-opfs-worker: failed to initialize sqlite3", err)
+  failQueuedDriverMessages(err)
+  failPendingLeaderResponses(errorMessage(err))
+  knownLeaderId = null
+  acceptingDriverMessages = false
+  bc?.postMessage(bcLeaderInitFailed(tabId, errorMessage(err)))
+  // Yield to another candidate before retrying; a broken owner must not pin the leader lock.
+  leaderLock?.release()
+  leaderLock = null
+  setTimeout(250) { if(!closeRequested) attemptLeaderLock() }
 }
 
 internal fun setupSharedMode() {
@@ -364,6 +377,14 @@ private fun handleSharedMessage(channel: BroadcastChannelLike, e: MessageEventLi
           drainQueuedDriverMessages()
         }
       }
+    kind == "leader-init-failed" && !isLeader -> {
+      failQueuedDriverMessages(m.error)
+      failPendingLeaderResponses(m.error.unsafeCast<String>())
+      knownLeaderId = null
+      acceptingDriverMessages = false
+      // A healthy candidate may already have announced itself on a different channel sender.
+      setupFollower()
+    }
     kind == "who-is-leader" && isLeader ->
       channel.postMessage(bcLeaderChanged(tabId))
     kind == "retry-pending" ->
