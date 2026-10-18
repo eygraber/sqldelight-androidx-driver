@@ -35,6 +35,70 @@ internal actual class TestFollowerCountPort(private val handle: JsAny) {
 internal actual fun attachFollowerCountPort(worker: Worker): TestFollowerCountPort =
   TestFollowerCountPort(attachFollowerCounts(worker))
 
+internal actual class TestPoolFileHold(private val handle: JsAny) {
+  actual suspend fun release() {
+    releasePoolFileHold(handle).await<JsAny?>()
+  }
+}
+
+internal actual suspend fun holdFirstPoolFile(): TestPoolFileHold {
+  val handle = startPoolFileHold()
+  awaitPoolFileHeld(handle).await<JsAny?>()
+  return TestPoolFileHold(handle)
+}
+
+@JsFun(
+  """() => {
+    const source = [
+      'let ah = null;',
+      'async function tryHold() {',
+      '  let d = await navigator.storage.getDirectory();',
+      '  d = await d.getDirectoryHandle(".opfs-sahpool");',
+      '  d = await d.getDirectoryHandle(".opaque");',
+      '  for await (const [, h] of d.entries()) {',
+      '    if (h.kind === "file") return await h.createSyncAccessHandle();',
+      '  }',
+      '  throw new Error("the SAH pool has no files");',
+      '}',
+      'onmessage = async (ev) => {',
+      '  if (ev.data === "hold") {',
+      '    while (!ah) {',
+      '      try { ah = await tryHold(); } catch (e) { await new Promise((r) => setTimeout(r, 50)); }',
+      '    }',
+      '    postMessage("held");',
+      '  } else if (ev.data === "release") {',
+      '    ah.close();',
+      '    ah = null;',
+      '    postMessage("released");',
+      '  }',
+      '};',
+    ].join('\n');
+    const worker = new Worker(URL.createObjectURL(new Blob([source], { type: 'text/javascript' })));
+    const replies = [];
+    const waiters = [];
+    worker.onmessage = (ev) => {
+      if (waiters.length) waiters.shift()(ev.data); else replies.push(ev.data);
+    };
+    const next = () => replies.length ? Promise.resolve(replies.shift()) : new Promise((r) => waiters.push(r));
+    worker.postMessage('hold');
+    const held = next();
+    return {
+      held: () => held,
+      release: () => {
+        worker.postMessage('release');
+        return next().then(() => worker.terminate());
+      }
+    };
+  }""",
+)
+private external fun startPoolFileHold(): JsAny
+
+@JsFun("(hold) => hold.held()")
+private external fun awaitPoolFileHeld(hold: JsAny): Promise<JsAny?>
+
+@JsFun("(hold) => hold.release()")
+private external fun releasePoolFileHold(hold: JsAny): Promise<JsAny?>
+
 @JsFun(
   """(name) => navigator.storage.getDirectory()
         .then(d => d.removeEntry(name).catch(() => undefined))
