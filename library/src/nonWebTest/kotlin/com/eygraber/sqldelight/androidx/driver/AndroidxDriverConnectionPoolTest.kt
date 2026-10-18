@@ -9,12 +9,15 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertNotSame
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
@@ -259,7 +262,7 @@ class AndroidxDriverConnectionPoolTest {
         override fun open(fileName: String): SQLiteConnection = TestConnection()
       }
 
-      override fun createConnection(name: String): SQLiteConnection =
+      override suspend fun createConnection(name: String): SQLiteConnection =
         error("boom")
     }
 
@@ -347,7 +350,7 @@ class AndroidxDriverConnectionPoolTest {
     pool.acquireWriterConnection()
     pool.releaseWriterConnection()
 
-    pool.releaseReaderConnection(fallbackReader!!)
+    pool.releaseReaderConnection(assertNotNull(fallbackReader))
     pool.close()
   }
 
@@ -384,16 +387,183 @@ class AndroidxDriverConnectionPoolTest {
     val reacquired = withTimeoutOrNull(5_000) { pool.acquireReaderConnection() }
     assertSame(reader, reacquired, "Reader handed to a cancelled acquire should return to the pool")
 
-    pool.releaseReaderConnection(reacquired!!)
+    pool.releaseReaderConnection(assertNotNull(reacquired))
     pool.releaseWriterConnection()
     pool.close()
   }
 
+  @Test
+  fun `close while the writer is held defers closing it until release`() = runTest {
+    var closedCount = 0
+    val pool = AndroidxDriverConnectionPool(
+      connectionFactory = TestConnectionFactory(),
+      nameProvider = { "test.db" },
+      isFileBased = true,
+      configuration = AndroidxSqliteConfiguration(),
+      onClosed = { closedCount++ },
+    )
+
+    val writer = pool.acquireWriterConnection() as TestConnection
+
+    pool.close()
+
+    assertFalse(writer.isClosed, "Held writer should stay open after close()")
+    assertEquals(0, closedCount, "onClosed should wait for the writer")
+    assertFalse(pool.isClosedForTest(), "awaitClosed should not have completed yet")
+
+    pool.releaseWriterConnection()
+
+    assertTrue(writer.isClosed, "Writer should close on release")
+    assertEquals(1, closedCount)
+    pool.awaitClosed()
+  }
+
+  @Test
+  fun `close while a reader is checked out closes it on release`() = runTest {
+    var closedCount = 0
+    val pool = AndroidxDriverConnectionPool(
+      connectionFactory = TestConnectionFactory(),
+      nameProvider = { "test.db" },
+      isFileBased = true,
+      configuration = AndroidxSqliteConfiguration(
+        concurrencyModel = MultipleReadersSingleWriter(isWal = true, walCount = 2),
+      ),
+      onClosed = { closedCount++ },
+    )
+
+    val reader = pool.acquireReaderConnection() as TestConnection
+    val idleReader = pool.acquireReaderConnection() as TestConnection
+    pool.releaseReaderConnection(idleReader)
+
+    pool.close()
+
+    assertTrue(idleReader.isClosed, "Idle reader should close right away")
+    assertFalse(reader.isClosed, "Checked-out reader should stay open after close()")
+    assertEquals(0, closedCount)
+
+    pool.releaseReaderConnection(reader)
+
+    assertTrue(reader.isClosed, "Reader should close on release")
+    assertEquals(1, closedCount)
+    pool.awaitClosed()
+  }
+
+  @Test
+  fun `acquire after close throws and does not reopen a connection`() = runTest {
+    val connectionFactory = TestConnectionFactory()
+    val pool = AndroidxDriverConnectionPool(
+      connectionFactory = connectionFactory,
+      nameProvider = { "test.db" },
+      isFileBased = true,
+      configuration = AndroidxSqliteConfiguration(
+        concurrencyModel = MultipleReadersSingleWriter(isWal = true, walCount = 1),
+      ),
+    )
+
+    pool.acquireWriterConnection()
+    pool.releaseWriterConnection()
+    pool.close()
+    pool.awaitClosed()
+    val createdBeforeClose = connectionFactory.created
+
+    assertFailsWith<IllegalStateException> { pool.acquireWriterConnection() }
+    assertFailsWith<IllegalStateException> { pool.acquireReaderConnection() }
+    assertFailsWith<IllegalStateException> { pool.runOnDispatcher {} }
+    assertEquals(createdBeforeClose, connectionFactory.created, "No connection should open after close")
+  }
+
+  @Test
+  fun `acquire that raced with close closes the writer it opened`() = runTest {
+    val connectionFactory = TestConnectionFactory()
+    val pool = AndroidxDriverConnectionPool(
+      connectionFactory = connectionFactory,
+      nameProvider = { "test.db" },
+      isFileBased = true,
+      configuration = AndroidxSqliteConfiguration(),
+    )
+
+    val first = pool.acquireWriterConnection() as TestConnection
+    supervisorScope {
+      val second = async { pool.acquireWriterConnection() }
+      delay(50)
+      pool.close()
+      pool.releaseWriterConnection()
+
+      assertFailsWith<IllegalStateException> { second.await() }
+    }
+    assertTrue(first.isClosed)
+    pool.awaitClosed()
+  }
+
+  @Test
+  fun `close is idempotent`() = runTest {
+    var closedCount = 0
+    val pool = AndroidxDriverConnectionPool(
+      connectionFactory = TestConnectionFactory(),
+      nameProvider = { "test.db" },
+      isFileBased = true,
+      configuration = AndroidxSqliteConfiguration(),
+      onClosed = { closedCount++ },
+    )
+
+    pool.close()
+    pool.close()
+    pool.awaitClosed()
+
+    assertEquals(1, closedCount)
+  }
+
+  @Test
+  fun `withAllConnectionsClosed waits for checked-out connections and closes them`() = runTest {
+    val connectionFactory = TestConnectionFactory()
+    val pool = AndroidxDriverConnectionPool(
+      connectionFactory = connectionFactory,
+      nameProvider = { "test.db" },
+      isFileBased = true,
+      configuration = AndroidxSqliteConfiguration(
+        concurrencyModel = MultipleReadersSingleWriter(isWal = true, walCount = 1),
+      ),
+    )
+
+    val writer = pool.acquireWriterConnection() as TestConnection
+    val reader = pool.acquireReaderConnection() as TestConnection
+
+    var ranWhileClosed = false
+    val exclusive = async {
+      pool.withAllConnectionsClosed {
+        ranWhileClosed = writer.isClosed && reader.isClosed
+      }
+    }
+
+    delay(100)
+    assertFalse(exclusive.isCompleted, "Should wait for the checked-out connections")
+
+    pool.releaseReaderConnection(reader)
+    pool.releaseWriterConnection()
+    exclusive.await()
+
+    assertTrue(ranWhileClosed, "Block should run after every connection closed")
+
+    val reopened = pool.acquireWriterConnection()
+    assertNotSame(writer, reopened, "A fresh writer should open after the block")
+    pool.releaseWriterConnection()
+    pool.close()
+    pool.awaitClosed()
+  }
+
+  private suspend fun AndroidxDriverConnectionPool.isClosedForTest(): Boolean =
+    withTimeoutOrNull(100) { awaitClosed() } != null
+
   private class TestConnectionFactory : AndroidxSqliteConnectionFactory {
+    var created = 0
+
     override val driver = object : SQLiteDriver {
       override fun open(fileName: String): SQLiteConnection = TestConnection()
     }
 
-    override fun createConnection(name: String): SQLiteConnection = TestConnection()
+    override suspend fun createConnection(name: String): SQLiteConnection {
+      created++
+      return TestConnection()
+    }
   }
 }

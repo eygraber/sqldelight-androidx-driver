@@ -18,20 +18,26 @@ actual class CommonCallbackTest : AndroidxSqliteCallbackTest()
 actual class CommonConcurrencyTest : AndroidxSqliteConcurrencyTest()
 actual class CommonCreationTest : AndroidxSqliteCreationTest()
 actual class CommonDriverTest : AndroidxSqliteDriverTest()
+actual class CommonDeleteDatabaseTest : AndroidxSqliteDeleteDatabaseTest()
 actual class CommonDriverOpenFlagsTest : AndroidxSqliteDriverOpenFlagsTest()
 actual class CommonEphemeralTest : AndroidxSqliteEphemeralTest()
 actual class CommonMigrationTest : AndroidxSqliteMigrationTest()
 actual class CommonQueryTest : AndroidxSqliteQueryTest()
 actual class CommonTransacterTest : AndroidxSqliteTransacterTest()
+actual class CommonTransacterThreadingTest : AndroidxSqliteTransacterThreadingTest()
 
 actual fun androidxSqliteTestDriver(): SQLiteDriver = BundledSQLiteDriver()
 
 @Suppress("InjectDispatcher")
 actual val IoDispatcher: CoroutineDispatcher get() = Dispatchers.IO
 
-actual fun deleteFile(name: String) {
+actual val isWebTarget: Boolean = false
+
+actual suspend fun deleteFile(name: String) {
   FileSystem.SYSTEM.delete(name.toPath())
 }
+
+actual fun fileExists(path: String): Boolean = FileSystem.SYSTEM.exists(path.toPath())
 
 @OptIn(ObsoleteWorkersApi::class)
 actual suspend inline fun <T> assertChecksThreadConfinement(

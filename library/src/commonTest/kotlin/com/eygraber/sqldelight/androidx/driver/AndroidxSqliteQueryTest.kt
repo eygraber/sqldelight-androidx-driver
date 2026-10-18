@@ -21,8 +21,8 @@ import kotlin.test.assertTrue
 abstract class AndroidxSqliteQueryTest {
   private val mapper = { cursor: SqlCursor ->
     TestData(
-      cursor.getLong(0)!!,
-      cursor.getString(1)!!,
+      requireNotNull(cursor.getLong(0)),
+      requireNotNull(cursor.getString(1)),
     )
   }
 
@@ -64,6 +64,7 @@ abstract class AndroidxSqliteQueryTest {
   @AfterTest
   fun tearDown() {
     driver.close()
+    closeAndroidxSqliteTestDriver()
   }
 
   @Test

@@ -15,6 +15,7 @@ import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotSame
 import kotlin.test.assertNull
@@ -80,8 +81,10 @@ abstract class AndroidxSqliteDriverTest {
     // wrap in a transaction to ensure read happens on transaction thread/connection
     transacter?.transactionWithResult {
       val mapper: (SqlCursor) -> QueryResult<Long?> = { cursor ->
-        cursor.next()
-        QueryResult.Value(cursor.getLong(0))
+        QueryResult.AsyncValue {
+          cursor.next().await()
+          cursor.getLong(0)
+        }
       }
       driver.executeQuery(
         identifier = null,
@@ -101,6 +104,7 @@ abstract class AndroidxSqliteDriverTest {
   fun tearDown() {
     transacter = null
     driver.close()
+    closeAndroidxSqliteTestDriver()
   }
 
   @Test
@@ -124,8 +128,9 @@ abstract class AndroidxSqliteDriverTest {
     }
 
     query { cursor ->
-      assertFalse(cursor.next().value)
-      QueryResult.AsyncValue {}
+      QueryResult.AsyncValue {
+        assertFalse(cursor.next().await())
+      }
     }
 
     insert {
@@ -134,18 +139,20 @@ abstract class AndroidxSqliteDriverTest {
     }
 
     query { cursor ->
-      assertTrue(cursor.next().value)
-      assertFalse(cursor.next().value)
-      QueryResult.AsyncValue {}
+      QueryResult.AsyncValue {
+        assertTrue(cursor.next().await())
+        assertFalse(cursor.next().await())
+      }
     }
 
     assertEquals(1, changes())
 
     query { cursor ->
-      assertTrue(cursor.next().value)
-      assertEquals(1, cursor.getLong(0))
-      assertEquals("Alec", cursor.getString(1))
-      QueryResult.AsyncValue {}
+      QueryResult.AsyncValue {
+        assertTrue(cursor.next().await())
+        assertEquals(1, cursor.getLong(0))
+        assertEquals("Alec", cursor.getString(1))
+      }
     }
 
     insert {
@@ -155,21 +162,23 @@ abstract class AndroidxSqliteDriverTest {
     assertEquals(1, changes())
 
     query { cursor ->
-      assertTrue(cursor.next().value)
-      assertEquals(1, cursor.getLong(0))
-      assertEquals("Alec", cursor.getString(1))
-      assertTrue(cursor.next().value)
-      assertEquals(2, cursor.getLong(0))
-      assertEquals("Jake", cursor.getString(1))
-      QueryResult.AsyncValue {}
+      QueryResult.AsyncValue {
+        assertTrue(cursor.next().await())
+        assertEquals(1, cursor.getLong(0))
+        assertEquals("Alec", cursor.getString(1))
+        assertTrue(cursor.next().await())
+        assertEquals(2, cursor.getLong(0))
+        assertEquals("Jake", cursor.getString(1))
+      }
     }
 
     driver.execute(5, "DELETE FROM test", 0).await()
     assertEquals(2, changes())
 
     query { cursor ->
-      assertFalse(cursor.next().value)
-      QueryResult.AsyncValue {}
+      QueryResult.AsyncValue {
+        assertFalse(cursor.next().await())
+      }
     }
   }
 
@@ -210,10 +219,11 @@ abstract class AndroidxSqliteDriverTest {
         bindString(0, "Jake")
       },
       mapper = { cursor ->
-        assertTrue(cursor.next().value)
-        assertEquals(2, cursor.getLong(0))
-        assertEquals("Jake", cursor.getString(1))
-        QueryResult.AsyncValue {}
+        QueryResult.AsyncValue {
+          assertTrue(cursor.next().await())
+          assertEquals(2, cursor.getLong(0))
+          assertEquals("Jake", cursor.getString(1))
+        }
       },
     )
 
@@ -223,10 +233,11 @@ abstract class AndroidxSqliteDriverTest {
         bindString(0, "Jake")
       },
       mapper = { cursor ->
-        assertTrue(cursor.next().value)
-        assertEquals(2, cursor.getLong(0))
-        assertEquals("Jake", cursor.getString(1))
-        QueryResult.AsyncValue {}
+        QueryResult.AsyncValue {
+          assertTrue(cursor.next().await())
+          assertEquals(2, cursor.getLong(0))
+          assertEquals("Jake", cursor.getString(1))
+        }
       },
     )
   }
@@ -252,13 +263,14 @@ abstract class AndroidxSqliteDriverTest {
     assertEquals(1, changes())
 
     val mapper: (SqlCursor) -> QueryResult<Unit> = { cursor ->
-      assertTrue(cursor.next().value)
-      assertEquals(1, cursor.getLong(0))
-      assertNull(cursor.getLong(1))
-      assertNull(cursor.getString(2))
-      assertNull(cursor.getBytes(3))
-      assertNull(cursor.getDouble(4))
-      QueryResult.AsyncValue {}
+      QueryResult.AsyncValue {
+        assertTrue(cursor.next().await())
+        assertEquals(1, cursor.getLong(0))
+        assertNull(cursor.getLong(1))
+        assertNull(cursor.getString(2))
+        assertNull(cursor.getBytes(3))
+        assertNull(cursor.getDouble(4))
+      }
     }
     driver.executeQuery(
       identifier = 8,
@@ -391,5 +403,88 @@ abstract class AndroidxSqliteDriverTest {
     val rowCount2 = driver.execute(null, "DELETE FROM test", 0).await()
 
     assertEquals(1, rowCount2)
+  }
+
+  @Test
+  fun `close inside a transaction lets the transaction finish`() = runTest {
+    // On web close() terminates the worker, which the shared test driver does not model.
+    if(!isWebTarget) {
+      val driver = driver as AndroidxSqliteDriver
+      val transacter = object : SuspendingTransacterImpl(driver) {}
+
+      val rowCount = transacter.transactionWithResult {
+        driver.close()
+
+        driver.execute(null, "INSERT INTO test VALUES (?, ?)", 2) {
+          bindLong(0, 1)
+          bindString(1, "41")
+        }.await()
+      }
+
+      assertEquals(1, rowCount)
+      driver.awaitClosed()
+
+      assertFailsWith<IllegalStateException> {
+        driver.execute(null, "DELETE FROM test", 0).await()
+      }
+    }
+  }
+
+  @Test
+  fun `statements after close throw`() = runTest {
+    val driver = driver as AndroidxSqliteDriver
+    driver.execute(null, "DELETE FROM test", 0).await()
+
+    driver.close()
+    driver.awaitClosed()
+
+    assertFailsWith<IllegalStateException> {
+      driver.execute(null, "DELETE FROM test", 0).await()
+    }
+    assertFailsWith<IllegalStateException> {
+      driver.executeQuery(
+        identifier = null,
+        sql = "SELECT * FROM test",
+        mapper = { QueryResult.Unit },
+        parameters = 0,
+      ).await()
+    }
+    assertFailsWith<IllegalStateException> {
+      object : SuspendingTransacterImpl(driver) {}.transaction {}
+    }
+  }
+
+  @Test
+  fun `recreateSchema inside a transaction throws`() = runTest {
+    val driver = driver as AndroidxSqliteDriver
+    val transacter = object : SuspendingTransacterImpl(driver) {}
+
+    transacter.transaction {
+      assertFailsWith<IllegalStateException> { driver.recreateSchema() }
+    }
+  }
+
+  @Test
+  fun `close is idempotent`() = runTest {
+    val driver = driver as AndroidxSqliteDriver
+    driver.execute(null, "DELETE FROM test", 0).await()
+
+    driver.close()
+    driver.close()
+    driver.awaitClosed()
+    driver.close()
+    driver.awaitClosed()
+  }
+
+  @Test
+  fun `close before the first statement`() = runTest {
+    val driver = driver as AndroidxSqliteDriver
+
+    driver.close()
+    driver.awaitClosed()
+
+    assertFailsWith<IllegalStateException> {
+      driver.execute(null, "DELETE FROM test", 0).await()
+    }
   }
 }

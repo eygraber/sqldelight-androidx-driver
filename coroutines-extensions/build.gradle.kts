@@ -1,3 +1,6 @@
+import org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi
+import org.jetbrains.kotlin.gradle.ExperimentalWasmDsl
+
 plugins {
   id("com.android.lint")
   id("com.eygraber.conventions-kotlin-multiplatform")
@@ -9,11 +12,53 @@ plugins {
 kotlin {
   defaultKmpTargets(
     project = project,
+    webOptions = KmpTarget.WebOptions(
+      isNodeEnabled = false,
+      isBrowserEnabled = true,
+      isBrowserEnabledForLibraryTests = true,
+    ),
     androidNamespace = "com.eygraber.sqldelight.androidx.driver.coroutines",
   )
 
-  androidLibrary {
+  android {
     withHostTest {}
+  }
+
+  @OptIn(ExperimentalWasmDsl::class)
+  wasmJs {
+    browser {
+      testTask {
+        useKarma {
+          // ChromeHeadlessNoSandbox so the browser starts under restricted CI runners
+          // (the default chrome-headless launcher fails to start on GitHub-hosted Linux
+          // runners without --no-sandbox).
+          useChromeHeadlessNoSandbox()
+        }
+      }
+    }
+  }
+
+  js {
+    browser {
+      testTask {
+        useKarma {
+          useChromeHeadlessNoSandbox()
+        }
+      }
+    }
+  }
+
+  @OptIn(ExperimentalKotlinGradlePluginApi::class)
+  applyDefaultHierarchyTemplate {
+    common {
+      group("nonWeb") {
+        withCompilations { it.target.targetName == "android" }
+        withJvm()
+        group("native") {
+          withNative()
+        }
+      }
+    }
   }
 
   sourceSets {
@@ -49,6 +94,12 @@ kotlin {
 
     nativeTest.dependencies {
       implementation(libs.androidx.sqliteBundled)
+    }
+
+    named("webTest").dependencies {
+      implementation(projects.opfsDriver)
+      implementation(libs.androidx.sqliteWeb)
+      implementation(libs.kotlinx.browser)
     }
   }
 }

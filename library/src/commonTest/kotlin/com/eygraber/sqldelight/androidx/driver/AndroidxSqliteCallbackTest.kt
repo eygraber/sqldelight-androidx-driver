@@ -7,6 +7,7 @@ import app.cash.sqldelight.db.SqlSchema
 import kotlinx.coroutines.test.runTest
 import kotlin.random.Random
 import kotlin.random.nextULong
+import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -99,7 +100,12 @@ abstract class AndroidxSqliteCallbackTest {
     }
   }
 
-  private inline fun withDatabase(
+  @AfterTest
+  fun closeTestDriver() {
+    closeAndroidxSqliteTestDriver()
+  }
+
+  private suspend inline fun withDatabase(
     schema: SqlSchema<QueryResult.AsyncValue<Unit>>,
     dbName: String,
     noinline onConfigure: suspend AndroidxSqliteConfigurableDriver.() -> Unit,
@@ -110,7 +116,7 @@ abstract class AndroidxSqliteCallbackTest {
     deleteDbAfterRun: Boolean = true,
     test: SqlDriver.() -> Unit,
   ) {
-    val fullDbName = "${this::class.qualifiedName.orEmpty()}.$dbName.db"
+    val fullDbName = "${this::class.simpleName.orEmpty()}.$dbName.db"
 
     if(deleteDbBeforeRun) {
       deleteFile(fullDbName)
@@ -138,6 +144,145 @@ abstract class AndroidxSqliteCallbackTest {
 
     if(result.isFailure) result.getOrThrow()
   }
+
+  @Test
+  fun `initialize runs the callbacks before any query`() = runTest {
+    var configure = 0
+    var create = 0
+    var update = 0
+    var open = 0
+
+    withDatabase(
+      schema = schema,
+      dbName = Random.nextULong().toHexString(),
+      onConfigure = { configure++ },
+      onCreate = { create++ },
+      onUpdate = { _, _ -> update++ },
+      onOpen = { open++ },
+    ) {
+      (this as AndroidxSqliteDriver).initialize()
+
+      assertEquals(1, configure)
+      assertEquals(1, create)
+      assertEquals(0, update)
+      assertEquals(1, open)
+
+      initialize()
+      execute(null, "PRAGMA user_version", 0).await()
+
+      assertEquals(1, configure)
+      assertEquals(1, create)
+      assertEquals(0, update)
+      assertEquals(1, open)
+    }
+  }
+
+  @Test
+  fun `recreateSchema before the first interaction runs configure create and open`() = runTest {
+    var configure = 0
+    var create = 0
+    var update = 0
+    var open = 0
+
+    withDatabase(
+      schema = schema,
+      dbName = Random.nextULong().toHexString(),
+      onConfigure = { configure++ },
+      onCreate = { create++ },
+      onUpdate = { _, _ -> update++ },
+      onOpen = { open++ },
+    ) {
+      (this as AndroidxSqliteDriver).recreateSchema()
+
+      assertEquals(1, configure)
+      assertEquals(1, create)
+      assertEquals(0, update)
+      assertEquals(1, open)
+
+      execute(null, "PRAGMA user_version", 0).await()
+
+      assertEquals(1, configure)
+      assertEquals(1, create)
+      assertEquals(0, update)
+      assertEquals(1, open)
+    }
+  }
+
+  @Test
+  fun `recreateSchema after the first interaction drops the data and runs create`() = runTest {
+    var configure = 0
+    var create = 0
+    var update = 0
+    var open = 0
+
+    withDatabase(
+      schema = schema,
+      dbName = Random.nextULong().toHexString(),
+      onConfigure = { configure++ },
+      onCreate = { create++ },
+      onUpdate = { _, _ -> update++ },
+      onOpen = { open++ },
+    ) {
+      execute(null, "INSERT INTO test VALUES (1, 'a')", 0).await()
+      execute(null, "CREATE TABLE extra (id INTEGER PRIMARY KEY)", 0).await()
+      execute(null, "CREATE INDEX extra_index ON extra(id)", 0).await()
+      execute(null, "CREATE VIEW extra_view AS SELECT id FROM extra", 0).await()
+      execute(
+        null,
+        "CREATE TRIGGER extra_trigger AFTER INSERT ON extra BEGIN DELETE FROM extra; END",
+        0,
+      ).await()
+      assertEquals(1L, count("test"))
+
+      (this as AndroidxSqliteDriver).recreateSchema()
+
+      assertEquals(1, configure)
+      assertEquals(2, create)
+      assertEquals(0, update)
+      assertEquals(1, open)
+
+      assertEquals(0L, count("test"))
+      assertEquals(listOf("nullability_test", "test"), schemaObjectNames())
+      assertEquals(schema.version, userVersion())
+    }
+  }
+
+  private suspend fun SqlDriver.count(table: String): Long = executeQuery(
+    identifier = null,
+    sql = "SELECT count(*) FROM $table",
+    mapper = { cursor ->
+      QueryResult.AsyncValue {
+        cursor.next().await()
+        requireNotNull(cursor.getLong(0))
+      }
+    },
+    parameters = 0,
+  ).await()
+
+  private suspend fun SqlDriver.userVersion(): Long = executeQuery(
+    identifier = null,
+    sql = "PRAGMA user_version",
+    mapper = { cursor ->
+      QueryResult.AsyncValue {
+        cursor.next().await()
+        requireNotNull(cursor.getLong(0))
+      }
+    },
+    parameters = 0,
+  ).await()
+
+  private suspend fun SqlDriver.schemaObjectNames(): List<String> = executeQuery(
+    identifier = null,
+    sql = "SELECT name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name",
+    mapper = { cursor ->
+      QueryResult.AsyncValue {
+        buildList {
+          while(cursor.next().await()) add(requireNotNull(cursor.getString(0)))
+        }
+      }
+    },
+    parameters = 0,
+  ).await()
 
   @Test
   fun `create and open callbacks are invoked once when opening a new database`() = runTest {

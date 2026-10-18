@@ -17,6 +17,7 @@ import kotlinx.atomicfu.locks.ReentrantLock
 import kotlinx.atomicfu.locks.SynchronizedObject
 import kotlinx.atomicfu.locks.synchronized
 import kotlinx.atomicfu.locks.withLock
+import kotlinx.coroutines.currentCoroutineContext
 
 /**
  * @param databaseType Specifies the type of the database file
@@ -27,8 +28,8 @@ import kotlinx.atomicfu.locks.withLock
  * @see SqlSchema.migrate
  */
 public class AndroidxSqliteDriver @VisibleForTesting(otherwise = PRIVATE) internal constructor(
-  connectionFactory: AndroidxSqliteConnectionFactory,
-  databaseType: AndroidxSqliteDatabaseType,
+  private val connectionFactory: AndroidxSqliteConnectionFactory,
+  private val databaseType: AndroidxSqliteDatabaseType,
   private val schema: SqlSchema<QueryResult.AsyncValue<Unit>>,
   configuration: AndroidxSqliteConfiguration = AndroidxSqliteConfiguration(),
   private val migrateEmptySchema: Boolean = false,
@@ -88,16 +89,31 @@ public class AndroidxSqliteDriver @VisibleForTesting(otherwise = PRIVATE) intern
       }
     }
 
+    val onConnectionClosed: (SQLiteConnection) -> Unit = { connection ->
+      statementsCacheLock.withLock {
+        statementsCache.remove(connection)
+      }?.evictAll()
+    }
+
+    val onClosed: () -> Unit = {
+      statementsCacheLock.withLock {
+        statementsCache.values.forEach { it.evictAll() }
+        statementsCache.clear()
+      }
+    }
+
     overridingConnectionPool ?: when {
       connectionFactory.driver.hasConnectionPool ->
-        PassthroughConnectionPool(
+        createPassthroughConnectionPool(
           connectionFactory = connectionFactory,
           nameProvider = nameProvider,
           configuration = configuration,
+          onConnectionClosed = onConnectionClosed,
+          onClosed = onClosed,
         )
 
       else ->
-        AndroidxDriverConnectionPool(
+        createDefaultConnectionPool(
           connectionFactory = connectionFactory,
           nameProvider = nameProvider,
           isFileBased = when(databaseType) {
@@ -107,11 +123,8 @@ public class AndroidxSqliteDriver @VisibleForTesting(otherwise = PRIVATE) intern
             AndroidxSqliteDatabaseType.Temporary -> false
           },
           configuration = configuration,
-          onConnectionClosed = { connection ->
-            statementsCacheLock.withLock {
-              statementsCache.remove(connection)
-            }?.evictAll()
-          },
+          onConnectionClosed = onConnectionClosed,
+          onClosed = onClosed,
         )
     }
   }
@@ -256,6 +269,41 @@ public class AndroidxSqliteDriver @VisibleForTesting(otherwise = PRIVATE) intern
       dispatch(transaction)
     }
 
+  /**
+   * Runs the first-interaction work immediately, as a first query would. Does nothing when the
+   * first interaction already completed. Throws what that work throws, so a caller can catch a
+   * failed migration or a corrupt file here instead of on a later query.
+   */
+  public suspend fun initialize() {
+    executingDriverHolder.ensureSchemaIsReady {}
+  }
+
+  /**
+   * Drops every schema object, then runs [SqlSchema.create] and `onCreate`. All data is lost.
+   * The work runs in one transaction with foreign keys disabled. When the first interaction has
+   * not completed, `onConfigure` runs before and `onOpen` runs after, and the driver is
+   * initialized. Do not call it inside a transaction.
+   */
+  public suspend fun recreateSchema() {
+    executingDriverHolder.recreateSchema()
+  }
+
+  internal suspend fun resetDatabase(deleteFiles: (databaseFilePath: String) -> Unit) {
+    check(currentCoroutineContext()[TransactionElement] == null) {
+      "deleteDatabase cannot be called inside a transaction"
+    }
+    executingDriverHolder.withSchemaLock {
+      connectionPool.withAllConnectionsClosed {
+        when(databaseType) {
+          is AndroidxSqliteDatabaseType.File -> deleteFiles(databaseType.databaseFilePath)
+          is AndroidxSqliteDatabaseType.FileProvider -> deleteFiles(databaseType.databaseFilePathProvider())
+          AndroidxSqliteDatabaseType.Memory, AndroidxSqliteDatabaseType.Temporary -> {}
+        }
+      }
+      executingDriverHolder.isFirstInteraction = true
+    }
+  }
+
   override fun addListener(vararg queryKeys: String, listener: Query.Listener) {
     synchronized(listenersLock) {
       queryKeys.forEach {
@@ -314,17 +362,23 @@ public class AndroidxSqliteDriver @VisibleForTesting(otherwise = PRIVATE) intern
   }
 
   /**
-   * It is the caller's responsibility to ensure that no threads
-   * are using any of the connections starting from when close is invoked.
-   *
-   * An [IllegalStateException] may be thrown if there are threads using any of the connections.
+   * Closes the driver. Idle connections close immediately. A connection in use closes when its
+   * coroutine releases it. On the JVM, Android, and native, statements and transactions in
+   * progress therefore complete. New statements fail with an [IllegalStateException]. On web,
+   * the [SQLiteDriver] closes immediately when it is closable, so a statement in the worker
+   * queue fails. Use [awaitClosed] to wait for the last connection.
    */
   override fun close() {
-    statementsCacheLock.withLock {
-      statementsCache.values.forEach { it.evictAll() }
-      statementsCache.clear()
-    }
     connectionPool.close()
+    closeSqliteDriver(connectionFactory.driver)
+  }
+
+  /**
+   * Suspends until the last connection closes after [close]. Returns immediately when the driver
+   * is already closed. Suspends forever when [close] is never called.
+   */
+  public suspend fun awaitClosed() {
+    connectionPool.awaitClosed()
   }
 
   public data class ForeignKeyConstraintViolation(
