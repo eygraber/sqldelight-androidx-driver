@@ -15,6 +15,7 @@ import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotSame
 import kotlin.test.assertNull
@@ -402,5 +403,78 @@ abstract class AndroidxSqliteDriverTest {
     val rowCount2 = driver.execute(null, "DELETE FROM test", 0).await()
 
     assertEquals(1, rowCount2)
+  }
+
+  @Test
+  fun `close inside a transaction lets the transaction finish`() = runTest {
+    // On web close() terminates the worker, which the shared test driver does not model.
+    if(!isWebTarget) {
+      val driver = driver as AndroidxSqliteDriver
+      val transacter = object : SuspendingTransacterImpl(driver) {}
+
+      val rowCount = transacter.transactionWithResult {
+        driver.close()
+
+        driver.execute(null, "INSERT INTO test VALUES (?, ?)", 2) {
+          bindLong(0, 1)
+          bindString(1, "41")
+        }.await()
+      }
+
+      assertEquals(1, rowCount)
+      driver.awaitClosed()
+
+      assertFailsWith<IllegalStateException> {
+        driver.execute(null, "DELETE FROM test", 0).await()
+      }
+    }
+  }
+
+  @Test
+  fun `statements after close throw`() = runTest {
+    val driver = driver as AndroidxSqliteDriver
+    driver.execute(null, "DELETE FROM test", 0).await()
+
+    driver.close()
+    driver.awaitClosed()
+
+    assertFailsWith<IllegalStateException> {
+      driver.execute(null, "DELETE FROM test", 0).await()
+    }
+    assertFailsWith<IllegalStateException> {
+      driver.executeQuery(
+        identifier = null,
+        sql = "SELECT * FROM test",
+        mapper = { QueryResult.Unit },
+        parameters = 0,
+      ).await()
+    }
+    assertFailsWith<IllegalStateException> {
+      object : SuspendingTransacterImpl(driver) {}.transaction {}
+    }
+  }
+
+  @Test
+  fun `close is idempotent`() = runTest {
+    val driver = driver as AndroidxSqliteDriver
+    driver.execute(null, "DELETE FROM test", 0).await()
+
+    driver.close()
+    driver.close()
+    driver.awaitClosed()
+    driver.close()
+    driver.awaitClosed()
+  }
+
+  @Test
+  fun `close before the first statement`() = runTest {
+    val driver = driver as AndroidxSqliteDriver
+
+    driver.close()
+    driver.awaitClosed()
+
+    assertFailsWith<IllegalStateException> {
+      driver.execute(null, "DELETE FROM test", 0).await()
+    }
   }
 }

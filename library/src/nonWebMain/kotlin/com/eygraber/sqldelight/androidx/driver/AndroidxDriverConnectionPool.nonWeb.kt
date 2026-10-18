@@ -5,10 +5,16 @@ import androidx.sqlite.async.executeSQL
 import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteConcurrencyModel.MultipleReaders
 import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteConcurrencyModel.MultipleReadersSingleWriter
 import com.eygraber.sqldelight.androidx.driver.AndroidxSqliteConcurrencyModel.SingleReaderWriter
+import kotlinx.atomicfu.atomic
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.channels.ClosedReceiveChannelException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -20,7 +26,8 @@ internal class AndroidxDriverConnectionPool(
   nameProvider: () -> String,
   private val isFileBased: Boolean,
   private val configuration: AndroidxSqliteConfiguration,
-  onConnectionClosed: (SQLiteConnection) -> Unit = {},
+  private val onConnectionClosed: (SQLiteConnection) -> Unit = {},
+  private val onClosed: () -> Unit = {},
 ) : ConnectionPool {
   private val name by lazy { nameProvider() }
 
@@ -28,6 +35,17 @@ internal class AndroidxDriverConnectionPool(
 
   @Volatile
   private var writerConnection: SQLiteConnection? = null
+
+  @Volatile
+  private var isClosed = false
+
+  // Every acquire increments before it checks isClosed, and close() sets isClosed before it reads
+  // the count, so one of them always observes the other. A locked writerMutex implies a count > 0.
+  private val outstanding = atomic(0)
+
+  private val closeFinished = atomic(false)
+
+  private val closed = CompletableDeferred<Unit>()
 
   @Volatile
   private var concurrencyModel: AndroidxSqliteConcurrencyModel
@@ -78,18 +96,39 @@ internal class AndroidxDriverConnectionPool(
 
   override suspend fun <R> runOnDispatcher(block: suspend () -> R) =
     when(currentCoroutineContext()[TransactionElement]) {
-      null -> withContext(concurrencyModel.dispatcher) {
-        block()
+      null -> {
+        check(!isClosed) { POOL_CLOSED_MESSAGE }
+        withContext(concurrencyModel.dispatcher) {
+          block()
+        }
       }
 
       else -> block()
     }
 
-  override suspend fun acquireWriterConnection(): SQLiteConnection {
+  private inline fun <R> counted(block: () -> R): R {
+    outstanding.incrementAndGet()
+    var handedOff = false
+    try {
+      val result = block()
+      handedOff = true
+      return result
+    }
+    finally {
+      if(!handedOff) {
+        outstanding.decrementAndGet()
+        finishCloseIfReady()
+      }
+    }
+  }
+
+  override suspend fun acquireWriterConnection(): SQLiteConnection = counted { lockWriter() }
+
+  private suspend fun lockWriter(): SQLiteConnection {
     writerMutex.lock()
     var handedOff = false
     try {
-      val connection = writer()
+      val connection = writerLocked()
       handedOff = true
       return connection
     }
@@ -100,8 +139,54 @@ internal class AndroidxDriverConnectionPool(
     }
   }
 
+  private suspend fun writerLocked(): SQLiteConnection {
+    if(isClosed) {
+      closeWriterLocked()
+      error(POOL_CLOSED_MESSAGE)
+    }
+    return writer()
+  }
+
+  private fun closeWriterLocked() {
+    val connection = writerConnection ?: return
+    writerConnection = null
+    try {
+      connection.close()
+    }
+    catch(_: Throwable) {}
+    try {
+      onConnectionClosed(connection)
+    }
+    catch(_: Throwable) {}
+  }
+
   override suspend fun releaseWriterConnection() {
-    writerMutex.unlock()
+    try {
+      if(isClosed) closeWriterLocked()
+    }
+    finally {
+      writerMutex.unlock()
+      outstanding.decrementAndGet()
+      finishCloseIfReady()
+    }
+  }
+
+  // The last release usually runs on one of the dispatcher's own threads, and closing a native
+  // MultiWorkerDispatcher from inside one of its workers never returns.
+  @OptIn(DelicateCoroutinesApi::class)
+  @Suppress("InjectDispatcher")
+  private fun finishCloseIfReady() {
+    if(!isClosed || outstanding.value != 0) return
+    if(!closeFinished.compareAndSet(expect = false, update = true)) return
+    try {
+      onClosed()
+    }
+    finally {
+      closed.complete(Unit)
+      GlobalScope.launch(Dispatchers.Default) {
+        concurrencyModel.close()
+      }
+    }
   }
 
   /**
@@ -122,7 +207,7 @@ internal class AndroidxDriverConnectionPool(
         locked = true
       }
       if(!locked) return null
-      val connection = writer()
+      val connection = writerLocked()
       handedOff = true
       return connection
     }
@@ -134,9 +219,19 @@ internal class AndroidxDriverConnectionPool(
     }
   }
 
-  override suspend fun acquireReaderConnection(): SQLiteConnection {
+  override suspend fun acquireReaderConnection(): SQLiteConnection = counted {
+    check(!isClosed) { POOL_CLOSED_MESSAGE }
+    try {
+      acquireReaderOrWriter()
+    }
+    catch(_: ClosedReceiveChannelException) {
+      error(POOL_CLOSED_MESSAGE)
+    }
+  }
+
+  private suspend fun acquireReaderOrWriter(): SQLiteConnection {
     while(true) {
-      if(concurrencyModel.readerCount == 0) return acquireWriterConnection()
+      if(concurrencyModel.readerCount == 0) return lockWriter()
       // acquire() returns null when capacity dropped to 0 mid-wait (e.g. WAL → non-WAL swap).
       // Loop so we re-check concurrencyModel and route to the writer.
       val reader = readerPool.acquire(
@@ -147,11 +242,12 @@ internal class AndroidxDriverConnectionPool(
   }
 
   override suspend fun releaseReaderConnection(connection: SQLiteConnection) {
-    when(concurrencyModel.readerCount) {
-      0 -> releaseWriterConnection()
-      else -> when {
-        connection === writerConnection -> releaseWriterConnection()
-        else -> readerPool.release(connection)
+    when {
+      concurrencyModel.readerCount == 0 || connection === writerConnection -> releaseWriterConnection()
+      else -> {
+        readerPool.release(connection)
+        outstanding.decrementAndGet()
+        finishCloseIfReady()
       }
     }
   }
@@ -215,24 +311,33 @@ internal class AndroidxDriverConnectionPool(
     }
   }
 
-  override fun close() {
-    try {
-      runBlocking {
-        writerMutex.withLock {
-          writerConnection?.close()
-          writerConnection = null
-        }
+  override suspend fun <R> withAllConnectionsClosed(block: suspend () -> R): R =
+    readerPool.withSwap(
+      newCapacityAfter = { concurrencyModel.readerCount },
+    ) {
+      writerMutex.withLock {
+        check(!isClosed) { POOL_CLOSED_MESSAGE }
+        closeWriterLocked()
+        block()
       }
+    }
 
-      val priorCapacity = readerPool.currentCapacity
-      val drained = readerPool.drainAndClose()
-      val outstanding = priorCapacity - drained
-      check(outstanding == 0) {
-        "AndroidxDriverConnectionPool.close() called while $outstanding reader connection(s) still checked out"
+  override fun close() {
+    if(isClosed) return
+    isClosed = true
+    if(writerMutex.tryLock()) {
+      try {
+        closeWriterLocked()
+      }
+      finally {
+        writerMutex.unlock()
       }
     }
-    finally {
-      concurrencyModel.close()
-    }
+    readerPool.drainAndClose()
+    finishCloseIfReady()
+  }
+
+  override suspend fun awaitClosed() {
+    closed.await()
   }
 }
