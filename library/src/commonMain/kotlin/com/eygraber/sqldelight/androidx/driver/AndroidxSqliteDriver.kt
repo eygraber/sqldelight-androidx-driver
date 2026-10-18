@@ -268,6 +268,25 @@ public class AndroidxSqliteDriver @VisibleForTesting(otherwise = PRIVATE) intern
       dispatch(transaction)
     }
 
+  /**
+   * Runs the first-interaction work immediately, as a first query would. Does nothing when the
+   * first interaction already completed. Throws what that work throws, so a caller can catch a
+   * failed migration or a corrupt file here instead of on a later query.
+   */
+  public suspend fun initialize() {
+    executingDriverHolder.ensureSchemaIsReady {}
+  }
+
+  /**
+   * Drops every schema object, then runs [SqlSchema.create] and `onCreate`. All data is lost.
+   * The work runs in one transaction with foreign keys disabled. When the first interaction has
+   * not completed, `onConfigure` runs before and `onOpen` runs after, and the driver is
+   * initialized. Do not call it inside a transaction.
+   */
+  public suspend fun recreateSchema() {
+    executingDriverHolder.recreateSchema()
+  }
+
   override fun addListener(vararg queryKeys: String, listener: Query.Listener) {
     synchronized(listenersLock) {
       queryKeys.forEach {
