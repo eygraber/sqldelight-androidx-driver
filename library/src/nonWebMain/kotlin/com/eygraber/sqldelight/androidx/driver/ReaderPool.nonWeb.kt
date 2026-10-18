@@ -142,8 +142,12 @@ internal class ReaderPool(
     }
   }
 
-  suspend fun release(connection: SQLiteConnection) {
-    channel.send(ReaderEntry(connection = connection))
+  // trySend never fails on an UNLIMITED channel unless the pool was closed, in which case the
+  // reader closes here instead of returning to the channel.
+  fun release(connection: SQLiteConnection) {
+    if(channel.trySend(ReaderEntry(connection = connection)).isFailure) {
+      closeQuietly(connection)
+    }
   }
 
   /**

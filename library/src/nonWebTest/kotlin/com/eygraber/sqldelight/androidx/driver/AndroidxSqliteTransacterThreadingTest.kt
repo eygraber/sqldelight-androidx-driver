@@ -252,4 +252,8 @@ private class FirstTransactionsFailConnectionPool : ConnectionPool {
   override suspend fun <R> setJournalMode(
     executeStatement: suspend (SQLiteConnection) -> R,
   ): R = error("Don't use")
+
+  override suspend fun <R> withAllConnectionsClosed(block: suspend () -> R): R = error("Don't use")
+
+  override suspend fun awaitClosed() {}
 }

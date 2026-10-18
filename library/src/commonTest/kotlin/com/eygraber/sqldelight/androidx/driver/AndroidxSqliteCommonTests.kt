@@ -20,4 +20,6 @@ expect fun closeAndroidxSqliteTestDriver()
 
 expect val IoDispatcher: CoroutineDispatcher
 
+expect val isWebTarget: Boolean
+
 expect suspend fun deleteFile(name: String)

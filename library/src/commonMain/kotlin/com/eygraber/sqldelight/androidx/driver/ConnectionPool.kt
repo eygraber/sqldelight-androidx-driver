@@ -16,8 +16,24 @@ internal interface ConnectionPool {
   suspend fun <R> setJournalMode(
     executeStatement: suspend (SQLiteConnection) -> R,
   ): R
+
+  /**
+   * Runs [block] after every connection is closed. Waits for checked-out connections. Later
+   * calls to [acquireWriterConnection] and [acquireReaderConnection] open new connections.
+   */
+  suspend fun <R> withAllConnectionsClosed(block: suspend () -> R): R
+
+  /**
+   * Rejects new calls to [acquireWriterConnection] and [acquireReaderConnection] and closes
+   * every idle connection. A checked-out connection closes on release. [onClosed] runs once,
+   * after the last connection closes.
+   */
   fun close()
+
+  suspend fun awaitClosed()
 }
+
+internal const val POOL_CLOSED_MESSAGE = "AndroidxSqliteDriver is closed"
 
 internal suspend inline fun <R> ConnectionPool.withWriterConnection(
   block: suspend SQLiteConnection.() -> R,
@@ -67,10 +83,13 @@ internal expect fun createDefaultConnectionPool(
   isFileBased: Boolean,
   configuration: AndroidxSqliteConfiguration,
   onConnectionClosed: (SQLiteConnection) -> Unit,
+  onClosed: () -> Unit,
 ): ConnectionPool
 
 internal expect fun createPassthroughConnectionPool(
   connectionFactory: AndroidxSqliteConnectionFactory,
   nameProvider: () -> String,
   configuration: AndroidxSqliteConfiguration,
+  onConnectionClosed: (SQLiteConnection) -> Unit,
+  onClosed: () -> Unit,
 ): ConnectionPool

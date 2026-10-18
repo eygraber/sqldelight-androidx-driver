@@ -214,6 +214,7 @@ driver.close()
 
 `close()` is idempotent. After it, `open` on the `OpfsSqliteDriver` fails with an
 `IllegalStateException`, and queries that the worker had queued fail with an exception.
+See [Closing the driver](#closing-the-driver-1) for what happens to statements in progress.
 
 #### Multi-tab support
 
@@ -350,6 +351,29 @@ has committed — they aren't part of it. To seed data or run additional SQL ins
 create/migrate transaction, put it in your `SqlSchema.create` / `SqlSchema.migrate`, or use
 `migrationCallbacks` (see below).
 
+### Closing the driver
+
+`close()` never blocks and never throws. Idle connections close immediately. A connection in use
+closes when its coroutine releases it. New statements fail with an `IllegalStateException`.
+
+On the JVM, Android, and native, a statement or transaction in progress completes, even when
+`close()` runs inside the transaction. The dispatcher shuts down after the last connection closes.
+
+On web, `close()` closes the `OpfsSqliteDriver` and its worker immediately. A paused driver can
+hold a statement for as long as the tab is hidden, so the worker does not wait for it. A statement
+that the worker has queued fails with an exception. The statement that the worker executes at that
+moment completes.
+
+`awaitClosed()` suspends until the last connection closes:
+
+```kotlin
+driver.close()
+driver.awaitClosed()
+```
+
+Call it before you open the same file with a new driver. Call it before you change the database
+files yourself.
+
 ### Migration Callbacks
 
 To run code at specific schema versions during migration (the equivalent of SQLDelight's
@@ -482,7 +506,8 @@ A few things to keep in mind:
   `generateAsync = true`. Use `.await()` on `execute` calls and `awaitAsOne` / `awaitAsOneOrNull` /
   `awaitAsList` from `app.cash.sqldelight:async-extensions` for queries.
 - Always `driver.close()` in `@AfterTest` (or `use { }`) so the driver's dispatcher and connection
-  pool are released between tests.
+  pool are released between tests. `close()` does not wait for statements in progress. Call
+  `awaitClosed()` first when a test needs the connections to be closed.
 - For multiplatform projects, the `commonTest` setup above works as-is — `BundledSQLiteDriver` and
   `AndroidxSqliteDatabaseType.Memory` are both available in common code.
 
