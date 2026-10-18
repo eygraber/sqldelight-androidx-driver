@@ -168,6 +168,62 @@ class AndroidxSqliteWebPauseOnHiddenIntegrationTest {
     awaitLockState(states, OpfsLockState.Live)
     assertEquals(listOf(OpfsLockState.Paused, OpfsLockState.Live), states)
   }
+
+  @Test
+  fun aFirstResumeThatAcquiresOnlySomePoolFilesRecoversAfterTheFileIsReleased() = runTest(timeout = 90.seconds) {
+    awaitOpfsRelease()
+    val holder = newTestDriver(OpfsMultiTabMode.Single)
+    val holderDatabase = newDatabase(holder)
+    holderDatabase.transaction {
+      holderDatabase.recordQueries.insert(
+        userId = "pause-7",
+        withRecord = byteArrayOf(0x01),
+      )
+    }
+    holder.close()
+    val hold = inRealTime { holdFirstPoolFile() }
+
+    val states = mutableListOf<OpfsLockState>()
+    val observed = newTestDriver(OpfsMultiTabMode.PauseOnHidden) { states.add(it) }
+    val control = attachTestControlPort(observed.opfsWorker.worker)
+    val failure = awaitControlMessage(control)
+    assertTrue(failure.startsWith("__opfsResumeFailed:"), failure)
+
+    inRealTime { hold.release() }
+    awaitLockState(states, OpfsLockState.Live)
+    val observedDatabase = newDatabase(observed)
+    val count = inRealTime { observedDatabase.recordQueries.countForUser(whereUserId = "pause-7").awaitAsOne() }
+    assertEquals(1L, count)
+  }
+
+  @Test
+  fun aLaterResumeThatAcquiresOnlySomePoolFilesRecoversAfterTheFileIsReleased() = runTest(timeout = 90.seconds) {
+    awaitOpfsRelease()
+    val states = mutableListOf<OpfsLockState>()
+    val observed = newTestDriver(OpfsMultiTabMode.PauseOnHidden) { states.add(it) }
+    val observedDatabase = newDatabase(observed)
+    observedDatabase.transaction {
+      observedDatabase.recordQueries.insert(
+        userId = "pause-8",
+        withRecord = byteArrayOf(0x01),
+      )
+    }
+
+    val observedWorker = observed.opfsWorker.worker
+    val control = attachTestControlPort(observedWorker)
+    postOpfsPause(observedWorker)
+    assertEquals("__opfsPausedAck", awaitControlMessage(control))
+    val hold = inRealTime { holdFirstPoolFile() }
+
+    postOpfsResume(observedWorker)
+    val failure = awaitControlMessage(control)
+    assertTrue(failure.startsWith("__opfsResumeFailed:"), failure)
+
+    inRealTime { hold.release() }
+    awaitLockState(states, OpfsLockState.Live)
+    val count = inRealTime { observedDatabase.recordQueries.countForUser(whereUserId = "pause-8").awaitAsOne() }
+    assertEquals(1L, count)
+  }
 }
 
 private suspend fun awaitControlMessage(control: TestControlPort): String = inRealTime { control.next() }

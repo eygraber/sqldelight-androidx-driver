@@ -101,8 +101,64 @@ internal fun abortLockWatch(controller: dynamic) {
 }
 
 // sqlite-wasm caches a rejected install, so without forceReinitIfPreviouslyFailed every retry rethrows the first error.
-internal fun installSqliteOpfsSAHPoolVfs(sqlite3: dynamic): Promise<dynamic> = js(
+internal fun installSqliteOpfsSAHPoolVfs(sqlite3: dynamic): Promise<dynamic> =
+  failingStrandedAccessHandles(accessHandleAttempts) { installSqliteOpfsSAHPoolVfsUntracked(sqlite3) }
+
+private fun installSqliteOpfsSAHPoolVfsUntracked(sqlite3: dynamic): Promise<dynamic> = js(
   """sqlite3.installOpfsSAHPoolVfs({ clearOnInit: false, forceReinitIfPreviouslyFailed: true })""",
+)
+
+// sqlite-wasm 3.53 leaks access handles that resolve after a sibling createSyncAccessHandle fails (#297).
+private val accessHandleAttempts: dynamic by lazy { trackAccessHandleAttempts() }
+
+private fun trackAccessHandleAttempts(): dynamic = js(
+  """(function () {
+    var attempts = [];
+    var proto = FileSystemFileHandle.prototype;
+    var original = proto.createSyncAccessHandle;
+    proto.createSyncAccessHandle = function () {
+      var acquisition = original.apply(this, arguments);
+      if (!attempts.length) return acquisition;
+      var owners = attempts.slice();
+      return acquisition.then(
+        function (handle) {
+          if (owners.some(function (owner) { return owner.failed; })) {
+            handle.close();
+            throw new Error('Another access handle in the same acquisition failed.');
+          }
+          return handle;
+        },
+        function (err) {
+          owners.forEach(function (owner) { owner.failed = true; });
+          throw err;
+        }
+      );
+    };
+    return attempts;
+  })()""",
+)
+
+private fun failingStrandedAccessHandles(
+  attempts: dynamic,
+  attempt: () -> Promise<dynamic>,
+): Promise<dynamic> = js(
+  """(function () {
+    var owner = { failed: false };
+    attempts.push(owner);
+    var stopTracking = function () {
+      attempts.splice(attempts.indexOf(owner), 1);
+    };
+    return new Promise(function (resolve) { resolve(attempt()); }).then(
+      function (value) {
+        stopTracking();
+        return value;
+      },
+      function (err) {
+        stopTracking();
+        throw err;
+      }
+    );
+  })()""",
 )
 
 internal fun newOpfsSAHPoolDb(poolUtil: dynamic, fileName: String): dynamic = js(
@@ -157,7 +213,10 @@ internal fun isObject(value: dynamic): Boolean = js(
   """value !== null && value !== undefined""",
 )
 
-internal fun unpauseVfs(util: dynamic): Promise<dynamic> = js(
+internal fun unpauseVfs(util: dynamic): Promise<dynamic> =
+  failingStrandedAccessHandles(accessHandleAttempts) { unpauseVfsUntracked(util) }
+
+private fun unpauseVfsUntracked(util: dynamic): Promise<dynamic> = js(
   """Promise.resolve(util.unpauseVfs())""",
 )
 

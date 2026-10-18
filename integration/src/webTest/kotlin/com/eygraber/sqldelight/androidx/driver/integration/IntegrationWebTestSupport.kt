@@ -110,3 +110,9 @@ internal expect class TestFollowerCountPort {
 }
 
 internal expect fun attachFollowerCountPort(worker: Worker): TestFollowerCountPort
+
+internal expect class TestPoolFileHold {
+  suspend fun release()
+}
+
+internal expect suspend fun holdFirstPoolFile(): TestPoolFileHold
