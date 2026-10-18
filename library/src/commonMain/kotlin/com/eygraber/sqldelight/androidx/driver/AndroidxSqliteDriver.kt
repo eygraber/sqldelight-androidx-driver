@@ -17,6 +17,7 @@ import kotlinx.atomicfu.locks.ReentrantLock
 import kotlinx.atomicfu.locks.SynchronizedObject
 import kotlinx.atomicfu.locks.synchronized
 import kotlinx.atomicfu.locks.withLock
+import kotlinx.coroutines.currentCoroutineContext
 
 /**
  * @param databaseType Specifies the type of the database file
@@ -28,7 +29,7 @@ import kotlinx.atomicfu.locks.withLock
  */
 public class AndroidxSqliteDriver @VisibleForTesting(otherwise = PRIVATE) internal constructor(
   private val connectionFactory: AndroidxSqliteConnectionFactory,
-  databaseType: AndroidxSqliteDatabaseType,
+  private val databaseType: AndroidxSqliteDatabaseType,
   private val schema: SqlSchema<QueryResult.AsyncValue<Unit>>,
   configuration: AndroidxSqliteConfiguration = AndroidxSqliteConfiguration(),
   private val migrateEmptySchema: Boolean = false,
@@ -285,6 +286,22 @@ public class AndroidxSqliteDriver @VisibleForTesting(otherwise = PRIVATE) intern
    */
   public suspend fun recreateSchema() {
     executingDriverHolder.recreateSchema()
+  }
+
+  internal suspend fun resetDatabase(deleteFiles: (databaseFilePath: String) -> Unit) {
+    check(currentCoroutineContext()[TransactionElement] == null) {
+      "deleteDatabase cannot be called inside a transaction"
+    }
+    executingDriverHolder.withSchemaLock {
+      connectionPool.withAllConnectionsClosed {
+        when(databaseType) {
+          is AndroidxSqliteDatabaseType.File -> deleteFiles(databaseType.databaseFilePath)
+          is AndroidxSqliteDatabaseType.FileProvider -> deleteFiles(databaseType.databaseFilePathProvider())
+          AndroidxSqliteDatabaseType.Memory, AndroidxSqliteDatabaseType.Temporary -> {}
+        }
+      }
+      executingDriverHolder.isFirstInteraction = true
+    }
   }
 
   override fun addListener(vararg queryKeys: String, listener: Query.Listener) {

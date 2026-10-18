@@ -14,6 +14,7 @@ actual class CommonCallbackTest : AndroidxSqliteCallbackTest()
 actual class CommonConcurrencyTest : AndroidxSqliteConcurrencyTest()
 actual class CommonCreationTest : AndroidxSqliteCreationTest()
 actual class CommonDriverTest : AndroidxSqliteDriverTest()
+actual class CommonDeleteDatabaseTest : AndroidxSqliteDeleteDatabaseTest()
 actual class CommonDriverOpenFlagsTest : AndroidxSqliteDriverOpenFlagsTest()
 actual class CommonEphemeralTest : AndroidxSqliteEphemeralTest()
 actual class CommonMigrationTest : AndroidxSqliteMigrationTest()
@@ -31,6 +32,8 @@ actual val isWebTarget: Boolean = false
 actual suspend fun deleteFile(name: String) {
   File(name).delete()
 }
+
+actual fun fileExists(path: String): Boolean = File(path).exists()
 
 actual suspend inline fun <T> assertChecksThreadConfinement(
   transacter: SuspendingTransacter,

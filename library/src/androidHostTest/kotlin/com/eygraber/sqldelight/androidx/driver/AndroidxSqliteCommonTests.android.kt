@@ -42,6 +42,9 @@ class AndroidGetDatabasePathConcurrencyTest : AndroidxSqliteConcurrencyTest() {
 actual class CommonDriverTest : AndroidxSqliteDriverTest()
 
 @RunWith(RobolectricTestRunner::class)
+actual class CommonDeleteDatabaseTest : AndroidxSqliteDeleteDatabaseTest()
+
+@RunWith(RobolectricTestRunner::class)
 actual class CommonDriverOpenFlagsTest : AndroidxSqliteDriverOpenFlagsTest()
 
 @RunWith(RobolectricTestRunner::class)
@@ -69,6 +72,8 @@ actual val isWebTarget: Boolean = false
 actual suspend fun deleteFile(name: String) {
   File(name).delete()
 }
+
+actual fun fileExists(path: String): Boolean = File(path).exists()
 
 actual suspend inline fun <T> assertChecksThreadConfinement(
   transacter: SuspendingTransacter,

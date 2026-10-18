@@ -415,7 +415,28 @@ try {
 ```
 
 Do not call it inside a transaction. It throws an `IllegalStateException` there. It does not
-repair a corrupt file. For that, delete the file. The driver then creates the file again.
+repair a corrupt file. For that, use `deleteDatabase()`.
+
+### Deleting the database
+
+`deleteDatabase()` is available on the JVM, Android, and native. It closes every connection, then
+deletes the database file and its `-journal`, `-wal`, and `-shm` files. All data is lost. The next
+query opens a new file, creates the schema, and runs `onConfigure`, `onCreate`, and `onOpen`. The
+call waits for a statement or transaction in progress to complete. Use it when the file is corrupt.
+
+```kotlin
+try {
+  driver.initialize()
+} catch(e: SQLiteException) {
+  driver.deleteDatabase()
+  driver.initialize()
+}
+```
+
+Do not call it inside a transaction. It throws an `IllegalStateException` there. For
+`AndroidxSqliteDatabaseType.Memory` and `AndroidxSqliteDatabaseType.Temporary`, it only closes the
+connections, which discards the database contents. On web, delete the file through the Origin Private
+File System API after `close()` and `awaitClosed()`.
 
 ### Migration Callbacks
 
