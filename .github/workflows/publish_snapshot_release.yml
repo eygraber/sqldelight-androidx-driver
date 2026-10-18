@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - master
-      - web
 
 jobs:
   publish_snapshot:
