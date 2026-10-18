@@ -840,6 +840,78 @@ abstract class AndroidxSqliteMigrationTest {
   }
 
   @Test
+  fun `recreateSchema after a failed migration creates the schema`() = runTest {
+    val schema = getSchema {
+      throw RuntimeException("Test")
+    }
+    val dbName = Random.nextULong().toHexString()
+
+    withDatabase(
+      schema = schema,
+      dbName = dbName,
+      onCreate = {},
+      onUpdate = { _, _ -> },
+      onOpen = {},
+      onConfigure = {},
+      deleteDbAfterRun = false,
+    ) {
+      (this as AndroidxSqliteDriver).initialize()
+    }
+
+    schema.version++
+
+    var create = 0
+    var open = 0
+
+    withDatabase(
+      schema = schema,
+      dbName = dbName,
+      onCreate = { create++ },
+      onUpdate = { _, _ -> },
+      onOpen = { open++ },
+      onConfigure = {},
+      deleteDbBeforeRun = false,
+    ) {
+      val driver = this as AndroidxSqliteDriver
+      val message = assertFailsWith<RuntimeException> { driver.initialize() }.message
+      assertEquals("Test", message)
+      assertEquals(0, create)
+      assertEquals(0, open)
+
+      driver.recreateSchema()
+
+      assertEquals(1, create)
+      assertEquals(1, open)
+
+      val userCount = executeQuery(
+        identifier = null,
+        sql = "SELECT count(*) FROM user",
+        mapper = { cursor ->
+          QueryResult.AsyncValue {
+            cursor.next().await()
+            cursor.getLong(0)
+          }
+        },
+        parameters = 0,
+      ).await()
+      assertEquals(2L, userCount)
+
+      val version = executeQuery(
+        identifier = null,
+        sql = "PRAGMA user_version",
+        mapper = { cursor ->
+          QueryResult.AsyncValue {
+            cursor.next().await()
+            cursor.getLong(0)
+          }
+        },
+        parameters = 0,
+      ).await()
+      assertEquals(2L, version)
+    }
+  }
+
+  @Test
   fun `future queries throw a propagated exception after an exception is thrown during migration`() = runTest {
     val schema = getSchema {
       throw RuntimeException("Test")

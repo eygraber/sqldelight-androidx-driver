@@ -374,6 +374,49 @@ driver.awaitClosed()
 Call it before you open the same file with a new driver. Call it before you change the database
 files yourself.
 
+### Initializing the driver
+
+The driver opens the database on the first query. `initialize()` does that work immediately and
+throws what a first query would throw. Use it to catch a failed migration or a corrupt file at a
+known point.
+
+```kotlin
+val driver = AndroidxSqliteDriver(
+  driver = BundledSQLiteDriver(),
+  databaseType = AndroidxSqliteDatabaseType.File("my.db"),
+  schema = Database.Schema,
+)
+
+try {
+  driver.initialize()
+} catch(e: SQLiteException) {
+  // decide what to do with the file
+}
+```
+
+A second call does nothing.
+
+### Recreating the schema
+
+`recreateSchema()` drops every schema object, then runs `SqlSchema.create` and `onCreate`. The
+dropped objects are tables, views, triggers, and indexes. All data is lost. The work runs in one
+transaction with foreign keys disabled, and `user_version` is set to the schema version. When the
+driver is not initialized, `onConfigure` runs before the work and `onOpen` runs after it, and the
+driver is initialized.
+
+Use it when a migration fails, for example after `initialize()` throws.
+
+```kotlin
+try {
+  driver.initialize()
+} catch(e: SQLiteException) {
+  driver.recreateSchema()
+}
+```
+
+Do not call it inside a transaction. It throws an `IllegalStateException` there. It does not
+repair a corrupt file. For that, delete the file. The driver then creates the file again.
+
 ### Migration Callbacks
 
 To run code at specific schema versions during migration (the equivalent of SQLDelight's

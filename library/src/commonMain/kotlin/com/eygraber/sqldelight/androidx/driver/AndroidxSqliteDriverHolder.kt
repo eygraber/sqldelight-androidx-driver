@@ -11,6 +11,7 @@ import app.cash.sqldelight.db.SqlDriver
 import app.cash.sqldelight.db.SqlSchema
 import kotlinx.atomicfu.locks.ReentrantLock
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlin.concurrent.Volatile
@@ -44,7 +45,7 @@ internal class AndroidxSqliteDriverHolder(
   private val createOrMigrateMutex = Mutex()
 
   @Volatile
-  private var isFirstInteraction = true
+  var isFirstInteraction = true
 
   fun currentTransaction() = executingDriver.currentTransaction()
 
@@ -52,109 +53,188 @@ internal class AndroidxSqliteDriverHolder(
     if(isFirstInteraction) {
       createOrMigrateMutex.withLock {
         if(isFirstInteraction) {
-          val executingDriver = AndroidxSqliteExecutingDriver(
-            connectionPool = connectionPool,
-            isStatementCacheSkipped = true,
-            statementCache = mutableMapOf(),
-            statementCacheLock = statementCacheLock,
-            statementCacheSize = 0,
-          )
-
-          AndroidxSqliteConfigurableDriver(executingDriver).onConfigure()
-
-          val currentVersion = connectionPool.withWriterConnection {
-            prepare("PRAGMA user_version").use { getVersion ->
-              when {
-                getVersion.step() -> getVersion.getLong(0)
-                else -> 0
-              }
-            }
-          }
-
-          val isCreate = currentVersion == 0L && !migrateEmptySchema
-          if(isCreate || currentVersion < schema.version) {
-            val transacter = object : SuspendingTransacterImpl(executingDriver) {}
-
-            connectionPool.withForeignKeysDisabled(
-              isForeignKeyConstraintsEnabled = isForeignKeyConstraintsEnabled,
-            ) {
-              transacter.transaction {
-                when {
-                  isCreate -> schema.create(executingDriver).await()
-                  else -> {
-                    // If there are no migration callbacks, rely on SQLDelight to handle migrating all the versions.
-                    // Otherwise, step through versions one at a time so the suspend migration callbacks can be
-                    // invoked directly between steps. We're already inside transacter.transaction { ... }, so the
-                    // TransactionElement is in the current coroutine context — the suspend callback inherits it and
-                    // its DB ops reuse the migration's writer.
-                    val callbacksByVersion = migrationCallbacks.filter { callback ->
-                      callback.afterVersion in currentVersion..<schema.version
-                    }.sortedBy { it.afterVersion }.groupBy { it.afterVersion }
-
-                    if(callbacksByVersion.isEmpty()) {
-                      schema.migrate(
-                        driver = executingDriver,
-                        oldVersion = currentVersion,
-                        newVersion = schema.version,
-                      ).await()
-                    }
-                    else {
-                      var lastMigrated = currentVersion
-                      callbacksByVersion.forEach { (afterVersion, callbacks) ->
-                        val targetVersion = afterVersion + 1
-                        if(targetVersion > lastMigrated) {
-                          schema.migrate(
-                            driver = executingDriver,
-                            oldVersion = lastMigrated,
-                            newVersion = targetVersion,
-                          ).await()
-                          lastMigrated = targetVersion
-                        }
-
-                        callbacks.forEach { cb -> cb.block(executingDriver) }
-                      }
-
-                      if(lastMigrated < schema.version) {
-                        schema.migrate(
-                          driver = executingDriver,
-                          oldVersion = lastMigrated,
-                          newVersion = schema.version,
-                        ).await()
-                      }
-                    }
-                  }
-                }
-
-                val transactionConnection = requireNotNull(
-                  (executingDriver.currentTransaction() as? ConnectionHolder)?.connection,
-                ) {
-                  "SqlDriver.newTransaction() must return an implementation of ConnectionHolder"
-                }
-
-                if(isForeignKeyConstraintsCheckedAfterCreateOrUpdate) {
-                  transactionConnection.reportForeignKeyViolations(
-                    maxMigrationForeignKeyConstraintViolationsToReport,
-                  )
-                }
-
-                transactionConnection.executeSQL("PRAGMA user_version = ${schema.version}")
-              }
-            }
-
-            when {
-              isCreate -> executingDriver.onCreate()
-              else -> executingDriver.onUpdate(currentVersion, schema.version)
-            }
-          }
-
-          executingDriver.onOpen()
-
-          isFirstInteraction = false
+          createOrMigrate()
         }
       }
     }
 
     return executingDriver.block()
+  }
+
+  suspend fun <R> withSchemaLock(block: suspend () -> R): R = createOrMigrateMutex.withLock { block() }
+
+  suspend fun recreateSchema() {
+    check(currentCoroutineContext()[TransactionElement] == null) {
+      "recreateSchema cannot be called inside a transaction"
+    }
+    createOrMigrateMutex.withLock {
+      val executingDriver = uncachedExecutingDriver()
+      val completesFirstInteraction = isFirstInteraction
+      if(completesFirstInteraction) {
+        AndroidxSqliteConfigurableDriver(executingDriver).onConfigure()
+      }
+
+      runSchemaTransaction(executingDriver) {
+        dropAllSchemaObjects(executingDriver)
+        schema.create(executingDriver).await()
+      }
+
+      executingDriver.onCreate()
+
+      if(completesFirstInteraction) {
+        executingDriver.onOpen()
+        isFirstInteraction = false
+      }
+    }
+  }
+
+  private fun uncachedExecutingDriver() = AndroidxSqliteExecutingDriver(
+    connectionPool = connectionPool,
+    isStatementCacheSkipped = true,
+    statementCache = mutableMapOf(),
+    statementCacheLock = statementCacheLock,
+    statementCacheSize = 0,
+  )
+
+  private suspend fun createOrMigrate() {
+    val executingDriver = uncachedExecutingDriver()
+
+    AndroidxSqliteConfigurableDriver(executingDriver).onConfigure()
+
+    val currentVersion = connectionPool.withWriterConnection {
+      prepare("PRAGMA user_version").use { getVersion ->
+        when {
+          getVersion.step() -> getVersion.getLong(0)
+          else -> 0
+        }
+      }
+    }
+
+    val isCreate = currentVersion == 0L && !migrateEmptySchema
+    if(isCreate || currentVersion < schema.version) {
+      runSchemaTransaction(executingDriver) {
+        when {
+          isCreate -> schema.create(executingDriver).await()
+          else -> migrate(executingDriver, currentVersion)
+        }
+      }
+
+      when {
+        isCreate -> executingDriver.onCreate()
+        else -> executingDriver.onUpdate(currentVersion, schema.version)
+      }
+    }
+
+    executingDriver.onOpen()
+
+    isFirstInteraction = false
+  }
+
+  private suspend fun migrate(executingDriver: AndroidxSqliteExecutingDriver, currentVersion: Long) {
+    // If there are no migration callbacks, rely on SQLDelight to handle migrating all the versions.
+    // Otherwise, step through versions one at a time so the suspend migration callbacks can be
+    // invoked directly between steps. We're already inside transacter.transaction { ... }, so the
+    // TransactionElement is in the current coroutine context — the suspend callback inherits it and
+    // its DB ops reuse the migration's writer.
+    val callbacksByVersion = migrationCallbacks.filter { callback ->
+      callback.afterVersion in currentVersion..<schema.version
+    }.sortedBy { it.afterVersion }.groupBy { it.afterVersion }
+
+    if(callbacksByVersion.isEmpty()) {
+      schema.migrate(
+        driver = executingDriver,
+        oldVersion = currentVersion,
+        newVersion = schema.version,
+      ).await()
+    }
+    else {
+      var lastMigrated = currentVersion
+      callbacksByVersion.forEach { (afterVersion, callbacks) ->
+        val targetVersion = afterVersion + 1
+        if(targetVersion > lastMigrated) {
+          schema.migrate(
+            driver = executingDriver,
+            oldVersion = lastMigrated,
+            newVersion = targetVersion,
+          ).await()
+          lastMigrated = targetVersion
+        }
+
+        callbacks.forEach { cb -> cb.block(executingDriver) }
+      }
+
+      if(lastMigrated < schema.version) {
+        schema.migrate(
+          driver = executingDriver,
+          oldVersion = lastMigrated,
+          newVersion = schema.version,
+        ).await()
+      }
+    }
+  }
+
+  private suspend fun runSchemaTransaction(
+    executingDriver: AndroidxSqliteExecutingDriver,
+    block: suspend () -> Unit,
+  ) {
+    val transacter = object : SuspendingTransacterImpl(executingDriver) {}
+
+    connectionPool.withForeignKeysDisabled(
+      isForeignKeyConstraintsEnabled = isForeignKeyConstraintsEnabled,
+    ) {
+      transacter.transaction {
+        block()
+
+        val transactionConnection = requireNotNull(
+          (executingDriver.currentTransaction() as? ConnectionHolder)?.connection,
+        ) {
+          "SqlDriver.newTransaction() must return an implementation of ConnectionHolder"
+        }
+
+        if(isForeignKeyConstraintsCheckedAfterCreateOrUpdate) {
+          transactionConnection.reportForeignKeyViolations(
+            maxMigrationForeignKeyConstraintViolationsToReport,
+          )
+        }
+
+        transactionConnection.executeSQL("PRAGMA user_version = ${schema.version}")
+      }
+    }
+  }
+
+  private suspend fun dropAllSchemaObjects(executingDriver: SqlDriver) {
+    val objects = executingDriver.executeQuery(
+      identifier = null,
+      sql = """
+      |SELECT type, name FROM sqlite_master
+      |WHERE name NOT LIKE 'sqlite\_%' ESCAPE '\'
+      |ORDER BY
+      |  CASE type WHEN 'trigger' THEN 0 WHEN 'view' THEN 1 WHEN 'index' THEN 2 ELSE 3 END,
+      |  CASE WHEN sql LIKE 'CREATE VIRTUAL TABLE%' THEN 0 ELSE 1 END
+      """.trimMargin(),
+      mapper = { cursor ->
+        QueryResult.AsyncValue {
+          buildList {
+            while(cursor.next().await()) {
+              add(requireNotNull(cursor.getString(0)) to requireNotNull(cursor.getString(1)))
+            }
+          }
+        }
+      },
+      parameters = 0,
+    ).await()
+
+    for((type, name) in objects) {
+      val keyword = when(type) {
+        "table" -> "TABLE"
+        "view" -> "VIEW"
+        "trigger" -> "TRIGGER"
+        "index" -> "INDEX"
+        else -> continue
+      }
+      val quotedName = "\"${name.replace("\"", "\"\"")}\""
+      executingDriver.execute(null, "DROP $keyword IF EXISTS $quotedName", 0).await()
+    }
   }
 }
 

@@ -455,6 +455,16 @@ abstract class AndroidxSqliteDriverTest {
   }
 
   @Test
+  fun `recreateSchema inside a transaction throws`() = runTest {
+    val driver = driver as AndroidxSqliteDriver
+    val transacter = object : SuspendingTransacterImpl(driver) {}
+
+    transacter.transaction {
+      assertFailsWith<IllegalStateException> { driver.recreateSchema() }
+    }
+  }
+
+  @Test
   fun `close is idempotent`() = runTest {
     val driver = driver as AndroidxSqliteDriver
     driver.execute(null, "DELETE FROM test", 0).await()
