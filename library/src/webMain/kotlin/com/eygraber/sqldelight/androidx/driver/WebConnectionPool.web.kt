@@ -4,6 +4,7 @@ import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.async.executeSQL
 import androidx.sqlite.async.prepare
 import androidx.sqlite.async.step
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -26,6 +27,8 @@ internal class WebConnectionPool(
   private val connectionFactory: AndroidxSqliteConnectionFactory,
   nameProvider: () -> String,
   private val configuration: AndroidxSqliteConfiguration,
+  private val onConnectionClosed: (SQLiteConnection) -> Unit = {},
+  private val onClosed: () -> Unit = {},
 ) : ConnectionPool {
   private val name by lazy { nameProvider() }
 
@@ -33,13 +36,48 @@ internal class WebConnectionPool(
 
   private var connection: SQLiteConnection? = null
 
+  private var isClosed = false
+
+  private var closeFinished = false
+
+  private val closed = CompletableDeferred<Unit>()
+
   // Must only be called while holding connectionMutex — createConnection and the PRAGMAs
   // suspend, so an unguarded null-check would let two coroutines create two connections.
-  private suspend fun acquire(): SQLiteConnection =
-    connection ?: connectionFactory
+  private suspend fun acquire(): SQLiteConnection {
+    if(isClosed) {
+      closeConnectionLocked()
+      error(POOL_CLOSED_MESSAGE)
+    }
+    return connection ?: connectionFactory
       .createConnection(name)
       .withWriterConfiguration(configuration)
       .also { connection = it }
+  }
+
+  private fun closeConnectionLocked() {
+    val c = connection
+    if(c != null) {
+      connection = null
+      try {
+        c.close()
+      }
+      catch(_: Throwable) {}
+      try {
+        onConnectionClosed(c)
+      }
+      catch(_: Throwable) {}
+    }
+    if(isClosed && !closeFinished) {
+      closeFinished = true
+      try {
+        onClosed()
+      }
+      finally {
+        closed.complete(Unit)
+      }
+    }
+  }
 
   override suspend fun <R> runOnDispatcher(block: suspend () -> R): R = block()
 
@@ -57,36 +95,65 @@ internal class WebConnectionPool(
   }
 
   override suspend fun releaseWriterConnection() {
-    connectionMutex.unlock()
+    try {
+      if(isClosed) closeConnectionLocked()
+    }
+    finally {
+      connectionMutex.unlock()
+    }
   }
 
   override suspend fun acquireReaderConnection(): SQLiteConnection = acquireWriterConnection()
 
   override suspend fun releaseReaderConnection(connection: SQLiteConnection) {
-    connectionMutex.unlock()
+    releaseWriterConnection()
   }
 
   override suspend fun <R> setJournalMode(
     executeStatement: suspend (SQLiteConnection) -> R,
   ): R = connectionMutex.withLock {
-    val c = acquire()
-    val isForeignKeyConstraintsEnabled =
-      c.prepare("PRAGMA foreign_keys;").use { statement ->
-        statement.step()
-        statement.getBoolean(0)
-      }
+    try {
+      val c = acquire()
+      val isForeignKeyConstraintsEnabled =
+        c.prepare("PRAGMA foreign_keys;").use { statement ->
+          statement.step()
+          statement.getBoolean(0)
+        }
 
-    val queryResult = executeStatement(c)
+      val queryResult = executeStatement(c)
 
-    // PRAGMA journal_mode currently wipes out foreign_keys - https://issuetracker.google.com/issues/447613208
-    val foreignKeys = if(isForeignKeyConstraintsEnabled) "ON" else "OFF"
-    c.executeSQL("PRAGMA foreign_keys = $foreignKeys;")
+      // PRAGMA journal_mode currently wipes out foreign_keys - https://issuetracker.google.com/issues/447613208
+      val foreignKeys = if(isForeignKeyConstraintsEnabled) "ON" else "OFF"
+      c.executeSQL("PRAGMA foreign_keys = $foreignKeys;")
 
-    queryResult
+      queryResult
+    }
+    finally {
+      if(isClosed) closeConnectionLocked()
+    }
   }
 
+  override suspend fun <R> withAllConnectionsClosed(block: suspend () -> R): R =
+    connectionMutex.withLock {
+      check(!isClosed) { POOL_CLOSED_MESSAGE }
+      closeConnectionLocked()
+      block()
+    }
+
   override fun close() {
-    connection?.close()
-    connection = null
+    if(isClosed) return
+    isClosed = true
+    if(connectionMutex.tryLock()) {
+      try {
+        closeConnectionLocked()
+      }
+      finally {
+        connectionMutex.unlock()
+      }
+    }
+  }
+
+  override suspend fun awaitClosed() {
+    closed.await()
   }
 }

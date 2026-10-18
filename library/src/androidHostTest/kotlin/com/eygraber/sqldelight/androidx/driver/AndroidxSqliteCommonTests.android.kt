@@ -64,6 +64,8 @@ actual fun androidxSqliteTestDriver(): SQLiteDriver = AndroidSQLiteDriver()
 @Suppress("InjectDispatcher")
 actual val IoDispatcher: CoroutineDispatcher get() = Dispatchers.IO
 
+actual val isWebTarget: Boolean = false
+
 actual suspend fun deleteFile(name: String) {
   File(name).delete()
 }

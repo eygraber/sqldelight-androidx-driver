@@ -29,6 +29,8 @@ actual fun closeAndroidxSqliteTestDriver() {
 @Suppress("InjectDispatcher")
 actual val IoDispatcher: CoroutineDispatcher get() = Dispatchers.Default
 
+actual val isWebTarget: Boolean = true
+
 actual suspend fun deleteFile(name: String) {
   removeOpfsEntry(name)
 }

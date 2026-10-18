@@ -88,12 +88,27 @@ public class AndroidxSqliteDriver @VisibleForTesting(otherwise = PRIVATE) intern
       }
     }
 
+    val onConnectionClosed: (SQLiteConnection) -> Unit = { connection ->
+      statementsCacheLock.withLock {
+        statementsCache.remove(connection)
+      }?.evictAll()
+    }
+
+    val onClosed: () -> Unit = {
+      statementsCacheLock.withLock {
+        statementsCache.values.forEach { it.evictAll() }
+        statementsCache.clear()
+      }
+    }
+
     overridingConnectionPool ?: when {
       connectionFactory.driver.hasConnectionPool ->
         createPassthroughConnectionPool(
           connectionFactory = connectionFactory,
           nameProvider = nameProvider,
           configuration = configuration,
+          onConnectionClosed = onConnectionClosed,
+          onClosed = onClosed,
         )
 
       else ->
@@ -107,11 +122,8 @@ public class AndroidxSqliteDriver @VisibleForTesting(otherwise = PRIVATE) intern
             AndroidxSqliteDatabaseType.Temporary -> false
           },
           configuration = configuration,
-          onConnectionClosed = { connection ->
-            statementsCacheLock.withLock {
-              statementsCache.remove(connection)
-            }?.evictAll()
-          },
+          onConnectionClosed = onConnectionClosed,
+          onClosed = onClosed,
         )
     }
   }
@@ -314,21 +326,23 @@ public class AndroidxSqliteDriver @VisibleForTesting(otherwise = PRIVATE) intern
   }
 
   /**
-   * Closes all connections in the pool and clears the statement cache.
-   * On web it then closes the [SQLiteDriver] when that driver is closable.
-   *
-   * It is the caller's responsibility to ensure that no other coroutines
-   * are using any of the connections starting from when close is invoked.
-   *
-   * An [IllegalStateException] may be thrown if there are coroutines using any of the connections.
+   * Closes the driver. Idle connections close immediately. A connection in use closes when its
+   * coroutine releases it. On the JVM, Android, and native, statements and transactions in
+   * progress therefore complete. New statements fail with an [IllegalStateException]. On web,
+   * the [SQLiteDriver] closes immediately when it is closable, so a statement in the worker
+   * queue fails. Use [awaitClosed] to wait for the last connection.
    */
   override fun close() {
-    statementsCacheLock.withLock {
-      statementsCache.values.forEach { it.evictAll() }
-      statementsCache.clear()
-    }
     connectionPool.close()
     closeSqliteDriver(connectionFactory.driver)
+  }
+
+  /**
+   * Suspends until the last connection closes after [close]. Returns immediately when the driver
+   * is already closed. Suspends forever when [close] is never called.
+   */
+  public suspend fun awaitClosed() {
+    connectionPool.awaitClosed()
   }
 
   public data class ForeignKeyConstraintViolation(
