@@ -5,6 +5,7 @@ fun main() {
 }
 
 internal fun drainQueuedDriverMessages() {
+  if(closeRequested) return
   while(queuedDriverMessages.isNotEmpty()) {
     val e = queuedDriverMessages.removeAt(0)
     routeDriverMessage(e)
@@ -38,6 +39,7 @@ private fun requestClose() {
     multiTabMode == "PauseOnHidden" -> finishClose()
     else -> whenLocalSqliteInitSettled(::finishClose)
   }
+  cancelLocalSqliteRetry()
 }
 
 private fun finishClose() {
@@ -63,7 +65,7 @@ private fun rejectAfterClose(data: dynamic) {
   if(isObject(data) && isObject(data.id)) replyError(data.id, CLOSED_MESSAGE)
 }
 
-private fun errorMessage(err: dynamic): String {
+internal fun errorMessage(err: dynamic): String {
   val message: dynamic = if(isObject(err)) err.message else null
   return if(isObject(message)) message.unsafeCast<String>() else "$err"
 }
@@ -156,6 +158,9 @@ private fun onResumeFailed(err: dynamic) {
     controlPorts.forEach(::controlPortAck)
     return
   }
+  // Another tab holding SAH handles is normal contention. The orchestrator retries while
+  // visible, so preserve these queries until the holder yields; other init failures reject them.
+  if(!isObject(err) || err.name != "NoModificationAllowedError") failQueuedDriverMessages(err)
   controlPorts.forEach { controlPortResumeFailed(it, errorMessage(err)) }
 }
 
@@ -196,7 +201,10 @@ private fun onPauseRequested() {
     // pause work AND the ack until then — the orchestrator releases the Web Lock on ack, and
     // releasing it before our handles are actually released would let another tab claim the
     // pool while we're claiming it too.
-    multiTabMode == "PauseOnHidden" && pauseState == PauseState.Resuming -> pendingPause = true
+    multiTabMode == "PauseOnHidden" && pauseState == PauseState.Resuming -> {
+      pendingPause = true
+      cancelLocalSqliteRetry()
+    }
     multiTabMode == "PauseOnHidden" && pauseState == PauseState.Live ->
       if(anyLocalDbInTransaction()) pendingPause = true else completePause()
     else -> controlPorts.forEach(::controlPortAck)
@@ -251,6 +259,7 @@ private fun routeOrQueueDriverMessage(e: MessageEventLike) {
 }
 
 private fun onLocalInitFailed(err: dynamic) {
+  if(closeRequested) return
   consoleErrorWith("sqldelight-androidx-opfs-worker: failed to initialize sqlite3", err)
   failQueuedDriverMessages(err)
 }

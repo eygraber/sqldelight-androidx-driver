@@ -71,7 +71,22 @@ kotlin {
     ignoreDefaultTargets = true,
   )
 
+  js {
+    browser {
+      testTask {
+        useKarma {
+          useChromeHeadlessNoSandbox()
+        }
+      }
+    }
+  }
+
   sourceSets {
+    jsTest.dependencies {
+      implementation(libs.test.kotlin)
+      implementation(libs.test.kotlinx.coroutines)
+    }
+
     webMain {
       kotlin.srcDir(generateWorkerSource)
 
